@@ -6,11 +6,13 @@
 # sed -i 's/&status_blue/\&status_green/g' target/linux/qualcommax/files/arch/arm64/boot/dts/qcom/ipq6000-re-ss-01.dts
 
 # 修改太乙启动LED为绿色，运行LED为蓝色(VIKINGYFY项目)
-# sed -i 's/boot/roc/g; s/running/boot/g; s/roc/running/g' target/linux/qualcommax/files/arch/arm64/boot/dts/qcom/ipq6010-re-cs-07.dts
+sed -i 's/boot/roc/g; s/running/boot/g; s/roc/running/g' target/linux/qualcommax/files/arch/arm64/boot/dts/qcom/ipq6010-re-cs-07.dts
 
 # 移除要替换的包
 rm -rf feeds/packages/net/alist
 rm -rf feeds/luci/applications/luci-app-alist
+rm -rf feeds/luci/themes/luci-theme-argon
+rm -rf feeds/luci/themes/luci-theme-netgear
 rm -rf feeds/packages/net/adguardhome
 rm -rf feeds/packages/net/ariang
 rm -rf package/emortal/luci-app-athena-led
@@ -40,6 +42,13 @@ chmod +x package/luci-app-athena-led/root/usr/sbin/athena-led
 # rm -rf package/luci-app-athena-led/luasrc/view/athena_led/athena_led_gift.htm
 # sed -i '/entry({ "admin", "system", "athena_led", "gift" }, template("athena_led\/athena_led_gift"), _("Gift"), 2)/d' package/luci-app-athena-led/luasrc/controller/athena_led.lua
 git clone --depth=1 https://github.com/sbwml/packages_lang_golang -b 23.x feeds/packages/lang/golang
+
+# Themes
+git clone --depth=1 -b 18.06 https://github.com/kiddin9/luci-theme-edge package/luci-theme-edge
+git clone --depth=1 -b 18.06 https://github.com/jerrykuku/luci-theme-argon package/luci-theme-argon
+git clone --depth=1 https://github.com/jerrykuku/luci-app-argon-config package/luci-app-argon-config
+git clone --depth=1 https://github.com/xiaoqingfengATGH/luci-theme-infinityfreedom package/luci-theme-infinityfreedom
+git_sparse_clone main https://github.com/haiibo/packages luci-theme-atmaterial luci-theme-opentomcat luci-theme-netgear
 
 ./scripts/feeds update -a
 ./scripts/feeds install -a
