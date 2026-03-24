@@ -1,4 +1,4 @@
-# 修改默认IP & 固件名称 & 编译署名和时间
+# 修改默认IP、主机名与版本显示
 sed -i 's/192.168.1.1/192.168.2.1/g' package/base-files/files/bin/config_generate
 sed -i "s/hostname='.*'/hostname='Roc'/g" package/base-files/files/bin/config_generate
 sed -i "s#_('Firmware Version'), (L\.isObject(boardinfo\.release) ? boardinfo\.release\.description + ' / ' : '') + (luciversion || ''),# \
@@ -14,73 +14,118 @@ sed -i "s#_('Firmware Version'), (L\.isObject(boardinfo\.release) ? boardinfo\.r
                 }, [ 'Built by Roc $(date "+%Y-%m-%d %H:%M:%S")' ])\n \
             ]),#" feeds/luci/modules/luci-mod-status/htdocs/luci-static/resources/view/status/include/10_system.js
 
-# 调整NSS驱动q6_region内存区域预留大小（ipq6018.dtsi默认预留85MB，ipq6018-512m.dtsi默认预留55MB，带WiFi必须至少预留54MB，以下分别是改成预留16MB、32MB、64MB和96MB）
-# sed -i 's/reg = <0x0 0x4ab00000 0x0 0x[0-9a-f]\+>/reg = <0x0 0x4ab00000 0x0 0x01000000>/' target/linux/qualcommax/files/arch/arm64/boot/dts/qcom/ipq6018-512m.dtsi
-# sed -i 's/reg = <0x0 0x4ab00000 0x0 0x[0-9a-f]\+>/reg = <0x0 0x4ab00000 0x0 0x02000000>/' target/linux/qualcommax/files/arch/arm64/boot/dts/qcom/ipq6018-512m.dtsi
-# sed -i 's/reg = <0x0 0x4ab00000 0x0 0x[0-9a-f]\+>/reg = <0x0 0x4ab00000 0x0 0x04000000>/' target/linux/qualcommax/files/arch/arm64/boot/dts/qcom/ipq6018-512m.dtsi
-# sed -i 's/reg = <0x0 0x4ab00000 0x0 0x[0-9a-f]\+>/reg = <0x0 0x4ab00000 0x0 0x06000000>/' target/linux/qualcommax/files/arch/arm64/boot/dts/qcom/ipq6018-512m.dtsi
-
-# 调节IPQ60XX的1.5GHz频率电压(从0.9375V提高到0.95V，过低可能导致不稳定，过高可能增加功耗和发热，具体数值需要根据实际情况调整)
-# sed -i 's/opp-microvolt = <937500>;/opp-microvolt = <950000>;/' target/linux/qualcommax/patches-6.12/0038-v6.16-arm64-dts-qcom-ipq6018-add-1.5GHz-CPU-Frequency.patch
-
-# 移除要替换的包
-rm -rf feeds/luci/applications/luci-app-argon-config
-rm -rf feeds/luci/applications/luci-app-wechatpush
-rm -rf feeds/luci/applications/luci-app-appfilter
-rm -rf feeds/luci/applications/luci-app-frpc
-rm -rf feeds/luci/applications/luci-app-frps
+# 清理与当前产品无关的第三方软件源
 rm -rf feeds/luci/themes/luci-theme-argon
-rm -rf feeds/packages/net/open-app-filter
-rm -rf feeds/packages/net/ariang
-rm -rf feeds/packages/net/frp
-rm -rf feeds/packages/lang/golang
+rm -rf feeds/luci/applications/luci-app-argon-config
+rm -rf feeds/luci/applications/luci-app-openclash
+rm -rf feeds/luci/themes/luci-theme-aurora
+rm -rf feeds/luci/applications/luci-app-aurora-config
+rm -rf package/luci-app-lucky
+rm -rf package/luci-app-openclash
 
-# Git稀疏克隆，只克隆指定目录到本地
-function git_sparse_clone() {
-  branch="$1" repourl="$2" && shift 2
-  git clone --depth=1 -b $branch --single-branch --filter=blob:none --sparse $repourl
-  repodir=$(echo $repourl | awk -F '/' '{print $(NF)}')
-  cd $repodir && git sparse-checkout set $@
-  mv -f $@ ../package
-  cd .. && rm -rf $repodir
-}
+# 引入 iStore feed
+grep -q '^src-git istore ' feeds.conf.default || echo 'src-git istore https://github.com/linkease/istore;main' >> feeds.conf.default
 
-# ariang & Go & frp & Argon & Aurora & OpenList & Lucky & wechatpush & OpenAppFilter & 集客无线AC控制器 & 雅典娜LED控制
-git_sparse_clone ariang https://github.com/laipeng668/packages net/ariang
-git_sparse_clone master https://github.com/laipeng668/packages lang/golang
-mv -f package/golang feeds/packages/lang/golang
-git_sparse_clone frp-binary https://github.com/laipeng668/packages net/frp
-mv -f package/frp feeds/packages/net/frp
-git_sparse_clone frp https://github.com/laipeng668/luci applications/luci-app-frpc applications/luci-app-frps
-mv -f package/luci-app-frpc feeds/luci/applications/luci-app-frpc
-mv -f package/luci-app-frps feeds/luci/applications/luci-app-frps
-git clone --depth=1 https://github.com/jerrykuku/luci-theme-argon feeds/luci/themes/luci-theme-argon
-git clone --depth=1 https://github.com/jerrykuku/luci-app-argon-config feeds/luci/applications/luci-app-argon-config
+# 保留当前需要的第三方软件
 git clone --depth=1 https://github.com/eamonxg/luci-theme-aurora feeds/luci/themes/luci-theme-aurora
 git clone --depth=1 https://github.com/eamonxg/luci-app-aurora-config feeds/luci/applications/luci-app-aurora-config
-git clone --depth=1 https://github.com/sbwml/luci-app-openlist2 package/openlist2
 git clone --depth=1 https://github.com/gdy666/luci-app-lucky package/luci-app-lucky
-git clone --depth=1 https://github.com/tty228/luci-app-wechatpush package/luci-app-wechatpush
-git clone --depth=1 https://github.com/destan19/OpenAppFilter.git package/OpenAppFilter
-git clone --depth=1 https://github.com/laipeng668/luci-app-gecoosac package/luci-app-gecoosac
-git clone --depth=1 https://github.com/NONGFAH/luci-app-athena-led package/luci-app-athena-led
-chmod +x package/luci-app-athena-led/root/etc/init.d/athena_led package/luci-app-athena-led/root/usr/sbin/athena-led
-
-### PassWall & OpenClash ###
-
-# 移除 OpenWrt Feeds 自带的核心库
-rm -rf feeds/packages/net/{xray-core,v2ray-geodata,sing-box,chinadns-ng,dns2socks,hysteria,ipt2socks,microsocks,naiveproxy,shadowsocks-libev,shadowsocks-rust,shadowsocksr-libev,simple-obfs,tcping,trojan-plus,tuic-client,v2ray-plugin,xray-plugin,geoview,shadow-tls}
-git clone --depth=1 https://github.com/Openwrt-Passwall/openwrt-passwall-packages package/passwall-packages
-
-# 移除 OpenWrt Feeds 过时的LuCI版本
-rm -rf feeds/luci/applications/luci-app-passwall
-rm -rf feeds/luci/applications/luci-app-openclash
-git clone --depth=1 https://github.com/Openwrt-Passwall/openwrt-passwall package/luci-app-passwall
-git clone --depth=1 https://github.com/Openwrt-Passwall/openwrt-passwall2 package/luci-app-passwall2
 git clone --depth=1 https://github.com/vernesong/OpenClash package/luci-app-openclash
 
-# 清理 PassWall 的 chnlist 规则文件
-echo "baidu.com"  > package/luci-app-passwall/luci-app-passwall/root/usr/share/passwall/rules/chnlist
+# 太乙: 首次启动自动将 overlay 迁移到 eMMC 空闲空间，避免 squashfs 更新后应用空间被 overlay 卡死
+mkdir -p files/etc/uci-defaults
+cat <<'EOF' > files/etc/uci-defaults/99-taiyi-extroot
+#!/bin/sh
+
+. /lib/functions/system.sh
+
+BOARD="$(board_name 2>/dev/null)"
+[ "$BOARD" = "jdcloud,re-cs-07" ] || exit 0
+[ -b /dev/mmcblk0 ] || exit 0
+command -v sgdisk >/dev/null 2>&1 || exit 0
+command -v mkfs.ext4 >/dev/null 2>&1 || exit 0
+command -v block >/dev/null 2>&1 || exit 0
+
+if grep -q ' /overlay ext4 ' /proc/mounts; then
+    exit 0
+fi
+
+LABEL="extroot"
+DISK="/dev/mmcblk0"
+DEVICE="$(blkid -L "${LABEL}" 2>/dev/null)"
+
+find_part_by_label() {
+    blkid | sed -n "/LABEL=\"${LABEL}\"/s/:.*//p" | head -n1
+}
+
+find_part_by_partlabel() {
+    blkid | sed -n "/PARTLABEL=\"${LABEL}\"/s/:.*//p" | head -n1
+}
+
+if [ -z "$DEVICE" ]; then
+    FIRST="$(sgdisk -F "${DISK}" 2>/dev/null)"
+    LAST="$(sgdisk -E "${DISK}" 2>/dev/null)"
+    case "${FIRST}:${LAST}" in
+        ''|*:|:*|*[!0-9:]*)
+            exit 0
+            ;;
+    esac
+    [ "${LAST}" -gt "${FIRST}" ] || exit 0
+
+    sgdisk -n 0:${FIRST}:${LAST} -t 0:8300 -c 0:${LABEL} "${DISK}" || exit 0
+    blockdev --rereadpt "${DISK}" 2>/dev/null || true
+
+    for _ in 1 2 3 4 5; do
+        sleep 2
+        DEVICE="$(find_part_by_partlabel)"
+        [ -b "$DEVICE" ] && break
+    done
+
+    [ -b "$DEVICE" ] || exit 0
+    mkfs.ext4 -F -L "${LABEL}" "${DEVICE}" || exit 0
+fi
+
+UUID="$(block info "${DEVICE}" | sed -n 's/.*UUID="\([^"]*\)".*/\1/p')"
+MOUNT="$(block info | sed -n '/MOUNT=".*\/overlay"/s/.*MOUNT="\([^"]*\)".*/\1/p' | head -n1)"
+ORIG="$(block info | sed -n '/MOUNT=".*\/overlay"/s/:.*$//p' | head -n1)"
+[ -n "${UUID}" ] || exit 0
+[ -n "${MOUNT}" ] || MOUNT="/overlay"
+
+mkdir -p /mnt/extroot
+mount "${DEVICE}" /mnt/extroot || exit 0
+tar -C "${MOUNT}" -cpf - . | tar -C /mnt/extroot -xpf - || {
+    umount /mnt/extroot
+    exit 0
+}
+umount /mnt/extroot
+
+uci -q set fstab.@global[0].anon_mount='0'
+uci -q set fstab.@global[0].auto_mount='1'
+uci -q set fstab.@global[0].auto_swap='1'
+uci -q delete fstab.extroot
+uci -q set fstab.extroot='mount'
+uci -q set fstab.extroot.uuid="${UUID}"
+uci -q set fstab.extroot.target="${MOUNT}"
+uci -q set fstab.extroot.fstype='ext4'
+uci -q set fstab.extroot.options='rw,noatime'
+uci -q set fstab.extroot.enabled='1'
+uci -q set fstab.extroot.enabled_fsck='1'
+
+if [ -n "${ORIG}" ]; then
+    uci -q delete fstab.rwm
+    uci -q set fstab.rwm='mount'
+    uci -q set fstab.rwm.device="${ORIG}"
+    uci -q set fstab.rwm.target='/rwm'
+    uci -q set fstab.rwm.enabled='1'
+fi
+
+uci commit fstab
+
+sync
+(sleep 3; reboot) &
+exit 0
+EOF
+chmod 0755 files/etc/uci-defaults/99-taiyi-extroot
 
 ./scripts/feeds update -a
 ./scripts/feeds install -a

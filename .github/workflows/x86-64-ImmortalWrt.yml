@@ -3,8 +3,6 @@ name: x86-64-ImmortalWrt
 on:
   workflow_dispatch:
   workflow_call:
-  # schedule:
-  #   - cron: 0 20 * * *
 
 env:
   REPO_URL: https://github.com/immortalwrt/immortalwrt.git
@@ -155,7 +153,9 @@ jobs:
         body: |
           **This is OpenWrt Firmware for ${{ env.FIRMWARE_TAG }}**
           ### 📒 固件信息
-          - 这是基于ImmortalWrt主线制作的固件，默认主题为Aurora；该固件在ImmortalWrt的基础上，添加了额外的软件包ddns、ttyd、upnp、wol、samba4、vlmcsd、aria2、autoreboot、uhttpd、frps、frpc、diskman、hd-idle、banip、acme、arpbind、usb-printer、openlist、dockerman、gecoosac、lucky、oaf、sqm、wireguard、watchcat、wechatpush、3cat、passwall、passwall2、openclash、smartdns，并添加了若干工具，具体详见x86-64.config和General.config。
+          - 该固件仅面向 x86-64 软路由，默认主题为 Aurora。
+          - 保留路由器基础管理能力，并只集成 HomeProxy、OpenClash、Lucky、Watchcat、banIP、Dufs、FileBrowser、Vlmcsd、iStore 及 Docker/NAS 相关入口。
+          - x86 版本切换为可写 ext4 根文件系统，避免 squashfs 固件在线升级应用后 overlay 空间无法有效释放的问题。
           - 💻 这是 ${{ env.FIRMWARE_TAG }} 平台使用的 OpenWrt 固件
           - ⚽ 固件源码: ${{ env.REPO_URL }}
           - 💝 源码分支: ${{ env.REPO_BRANCH }}

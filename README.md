@@ -1,29 +1,40 @@
 <div align="center">
-<h1>OpenWrt — 云编译</h1>
-
-## 特别提示
-
-- **本人不对任何人因使用本固件所遭受的任何理论或实际的损失承担责任！**
-
-- **本固件禁止用于任何商业用途，请务必严格遵守国家互联网使用相关法律规定！**
+<h1>OpenWrt - x86 / 太乙 云编译</h1>
 
 ## 项目说明
-- 默认管理地址：**`192.168.2.1`** 默认用户：**`root`** 默认密码：**`none`**
-- [云编译来源](https://github.com/haiibo/OpenWrt) [视频教程](https://www.youtube.com/watch?v=6j4ofS0GT38) [问题合集](https://github.com/LiBwrt/openwrt-6.x/issues)
 
-## 仓库说明
-- 本人 Fork 的仓库：[ImmortalWrt](https://github.com/laipeng668/immortalwrt) [LibWrt](https://github.com/laipeng668/openwrt-6.x)，内容大体一致。
-- `ImmortalWrt` 和 `LibWrt` 分别通过 rebase 和 merge 进行更新，相互印证。
-- `LibWrt` 因为 DTS 更为丰富，所以支持更多的机型。
+- 默认管理地址：**`192.168.2.1`**
+- 默认用户：**`root`**
+- 默认密码：**`none`**
+- 当前仓库只保留两个产品：**`x86-64`** 与 **`太乙(jdcloud_re-cs-07)`**
 
-## 定制固件
-- 首先要登录 Github 账号，然后 Fork 此项目到你自己的 Github 仓库。
-- 修改 `configs` 目录对应的文件添加或删除插件，或者上传自己的 `xx.config` 配置文件。
-- 不需要的软件包请把 `y` 改成 `n` ，仅在前面添加 `#` 是无效的。
-- 插件对应名称及功能请参考恩山网友帖子：[OpenWrt软件包全量解释](https://www.right.com.cn/FORUM/forum.php?mod=viewthread&tid=8384897)。
-- 如需修改默认 IP、添加或删除插件包以及一些其他设置请在 `Roc-script.sh` 文件内修改。
-- 添加或修改 `xx.yml` 文件，最后点击 `Actions` 运行要编译的 `workflow` 即可开始编译。
-- 编译大概需要 1-2 小时，编译完成后在仓库主页 [Releases](https://github.com/laipeng668/openwrt-ci-roc/releases) 对应 Tag 标签内下载固件。
+## 功能范围
 
-![Overview](Overview.png)
-![Global](Global.png)
+- 保留路由器基础管理能力与常用存储能力
+- 第三方应用仅保留：`HomeProxy`、`OpenClash`、`Lucky`、`Watchcat`、`banIP`、`Dufs`、`FileBrowser`、`Vlmcsd`、`iStore`
+- 同时保留 `Docker` 与 `NAS` 相关入口
+- 其余第三方服务与无关目标机型已移除
+
+## 存储与应用更新策略
+
+- **x86-64**：切换为可写 `ext4` 根文件系统，在线更新应用时不会再受 `squashfs + overlay` 空间回收问题影响
+- **太乙**：继续使用稳定的 `squashfs sysupgrade` 路径，并在首次启动时自动将 `overlay` 迁移到 eMMC 空闲空间，避免后续应用更新被系统 overlay 空间限制
+
+## 使用方式
+
+- `configs/x86-64.config`：x86-64 目标配置
+- `configs/Taiyi.config`：太乙目标配置
+- `configs/General.config`：通用包与基础能力配置
+- `scripts/Roc-script.sh`：主题、第三方源与太乙 extroot 初始化逻辑
+
+## 工作流
+
+- `.github/workflows/x86-64-ImmortalWrt.yml`
+- `.github/workflows/Taiyi-ImmortalWrt.yml`
+- `.github/workflows/Trigger-All-Workflows.yml`
+
+## 说明
+
+- 构建前请根据需要进一步调整 `configs/*.config`
+- 若需修改默认 IP、主机名、附加 feed 或首次启动脚本，请修改 `scripts/Roc-script.sh`
+- 固件编译完成后，可在仓库 Releases 对应标签下载镜像
