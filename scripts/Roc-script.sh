@@ -1,5 +1,5 @@
 # 修改默认IP、主机名与版本显示
-sed -i 's/192.168.1.1/192.168.2.1/g' package/base-files/files/bin/config_generate
+sed -i 's/192.168.1.1/192.168.100.1/g' package/base-files/files/bin/config_generate
 sed -i "s/hostname='.*'/hostname='Roc'/g" package/base-files/files/bin/config_generate
 sed -i "s#_('Firmware Version'), (L\.isObject(boardinfo\.release) ? boardinfo\.release\.description + ' / ' : '') + (luciversion || ''),# \
             _('Firmware Version'),\n \
@@ -15,11 +15,9 @@ sed -i "s#_('Firmware Version'), (L\.isObject(boardinfo\.release) ? boardinfo\.r
             ]),#" feeds/luci/modules/luci-mod-status/htdocs/luci-static/resources/view/status/include/10_system.js
 
 # 清理与当前产品无关的第三方软件源
+rm -rf feeds/luci/applications/luci-app-openclash
 rm -rf feeds/luci/themes/luci-theme-argon
 rm -rf feeds/luci/applications/luci-app-argon-config
-rm -rf feeds/luci/applications/luci-app-openclash
-rm -rf feeds/luci/themes/luci-theme-aurora
-rm -rf feeds/luci/applications/luci-app-aurora-config
 rm -rf package/luci-app-lucky
 rm -rf package/luci-app-openclash
 
@@ -27,13 +25,28 @@ rm -rf package/luci-app-openclash
 grep -q '^src-git istore ' feeds.conf.default || echo 'src-git istore https://github.com/linkease/istore;main' >> feeds.conf.default
 
 # 保留当前需要的第三方软件
-git clone --depth=1 https://github.com/eamonxg/luci-theme-aurora feeds/luci/themes/luci-theme-aurora
-git clone --depth=1 https://github.com/eamonxg/luci-app-aurora-config feeds/luci/applications/luci-app-aurora-config
+git clone --depth=1 https://github.com/jerrykuku/luci-theme-argon feeds/luci/themes/luci-theme-argon
+git clone --depth=1 https://github.com/jerrykuku/luci-app-argon-config feeds/luci/applications/luci-app-argon-config
 git clone --depth=1 https://github.com/gdy666/luci-app-lucky package/luci-app-lucky
 git clone --depth=1 https://github.com/vernesong/OpenClash package/luci-app-openclash
 
-# 太乙: 仅在系统已存在 extroot 分区时迁移 overlay，避免首次启动自动改盘带来的风险
+# 通用低风险默认项
 mkdir -p files/etc/uci-defaults
+cat <<'EOF' > files/etc/uci-defaults/99-roc-defaults
+#!/bin/sh
+
+uci -q set system.@system[0].hostname='Roc'
+uci -q set system.@system[0].timezone='CST-8'
+uci -q set system.@system[0].zonename='Asia/Shanghai'
+uci -q set luci.main.mediaurlbase='/luci-static/argon'
+uci commit system
+uci commit luci
+
+exit 0
+EOF
+chmod 0755 files/etc/uci-defaults/99-roc-defaults
+
+# 太乙: 仅在系统已存在 extroot 分区时迁移 overlay，避免首次启动自动改盘带来的风险
 cat <<'EOF' > files/etc/uci-defaults/99-taiyi-extroot
 #!/bin/sh
 

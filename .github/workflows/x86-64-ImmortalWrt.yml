@@ -153,13 +153,13 @@ jobs:
         body: |
           **This is OpenWrt Firmware for ${{ env.FIRMWARE_TAG }}**
           ### 📒 固件信息
-          - 该固件仅面向 x86-64 软路由，默认主题为 Aurora。
+          - 该固件仅面向 x86-64 软路由，默认主题为 Argon。
           - 保留路由器基础管理能力，并只集成 HomeProxy、OpenClash、Lucky、Watchcat、banIP、Dufs、FileBrowser、Vlmcsd、iStore 及 Docker/NAS 相关入口。
           - x86 版本切换为可写 ext4 根文件系统，避免 squashfs 固件在线升级应用后 overlay 空间无法有效释放的问题。
           - 💻 这是 ${{ env.FIRMWARE_TAG }} 平台使用的 OpenWrt 固件
           - ⚽ 固件源码: ${{ env.REPO_URL }}
           - 💝 源码分支: ${{ env.REPO_BRANCH }}
-          - 🌐 默认地址: **192.168.2.1**
+          - 🌐 默认地址: **192.168.100.1**
           - 🔑 默认密码: none
           ### 🧊 固件版本
           - 固件内核版本：**${{ env.VERSION_KERNEL }}**
