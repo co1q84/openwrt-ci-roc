@@ -32,7 +32,7 @@ git clone --depth=1 https://github.com/eamonxg/luci-app-aurora-config feeds/luci
 git clone --depth=1 https://github.com/gdy666/luci-app-lucky package/luci-app-lucky
 git clone --depth=1 https://github.com/vernesong/OpenClash package/luci-app-openclash
 
-# 太乙: 首次启动自动将 overlay 迁移到 eMMC 空闲空间，避免 squashfs 更新后应用空间被 overlay 卡死
+# 太乙: 仅在系统已存在 extroot 分区时迁移 overlay，避免首次启动自动改盘带来的风险
 mkdir -p files/etc/uci-defaults
 cat <<'EOF' > files/etc/uci-defaults/99-taiyi-extroot
 #!/bin/sh
@@ -42,8 +42,6 @@ cat <<'EOF' > files/etc/uci-defaults/99-taiyi-extroot
 BOARD="$(board_name 2>/dev/null)"
 [ "$BOARD" = "jdcloud,re-cs-07" ] || exit 0
 [ -b /dev/mmcblk0 ] || exit 0
-command -v sgdisk >/dev/null 2>&1 || exit 0
-command -v mkfs.ext4 >/dev/null 2>&1 || exit 0
 command -v block >/dev/null 2>&1 || exit 0
 
 if grep -q ' /overlay ext4 ' /proc/mounts; then
@@ -51,39 +49,8 @@ if grep -q ' /overlay ext4 ' /proc/mounts; then
 fi
 
 LABEL="extroot"
-DISK="/dev/mmcblk0"
 DEVICE="$(blkid -L "${LABEL}" 2>/dev/null)"
-
-find_part_by_label() {
-    blkid | sed -n "/LABEL=\"${LABEL}\"/s/:.*//p" | head -n1
-}
-
-find_part_by_partlabel() {
-    blkid | sed -n "/PARTLABEL=\"${LABEL}\"/s/:.*//p" | head -n1
-}
-
-if [ -z "$DEVICE" ]; then
-    FIRST="$(sgdisk -F "${DISK}" 2>/dev/null)"
-    LAST="$(sgdisk -E "${DISK}" 2>/dev/null)"
-    case "${FIRST}:${LAST}" in
-        ''|*:|:*|*[!0-9:]*)
-            exit 0
-            ;;
-    esac
-    [ "${LAST}" -gt "${FIRST}" ] || exit 0
-
-    sgdisk -n 0:${FIRST}:${LAST} -t 0:8300 -c 0:${LABEL} "${DISK}" || exit 0
-    blockdev --rereadpt "${DISK}" 2>/dev/null || true
-
-    for _ in 1 2 3 4 5; do
-        sleep 2
-        DEVICE="$(find_part_by_partlabel)"
-        [ -b "$DEVICE" ] && break
-    done
-
-    [ -b "$DEVICE" ] || exit 0
-    mkfs.ext4 -F -L "${LABEL}" "${DEVICE}" || exit 0
-fi
+[ -b "${DEVICE}" ] || exit 0
 
 UUID="$(block info "${DEVICE}" | sed -n 's/.*UUID="\([^"]*\)".*/\1/p')"
 MOUNT="$(block info | sed -n '/MOUNT=".*\/overlay"/s/.*MOUNT="\([^"]*\)".*/\1/p' | head -n1)"

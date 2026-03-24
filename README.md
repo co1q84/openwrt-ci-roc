@@ -18,7 +18,7 @@
 ## 存储与应用更新策略
 
 - **x86-64**：切换为可写 `ext4` 根文件系统，在线更新应用时不会再受 `squashfs + overlay` 空间回收问题影响
-- **太乙**：继续使用稳定的 `squashfs sysupgrade` 路径，并在首次启动时自动将 `overlay` 迁移到 eMMC 空闲空间，避免后续应用更新被系统 overlay 空间限制
+- **太乙**：继续使用稳定的 `squashfs sysupgrade` 路径；固件不再自动改分区，只会在你预先准备好并标记为 `extroot` 的 `ext4` 分区存在时，自动迁移 `overlay`
 
 ## 使用方式
 
@@ -37,4 +37,5 @@
 
 - 构建前请根据需要进一步调整 `configs/*.config`
 - 若需修改默认 IP、主机名、附加 feed 或首次启动脚本，请修改 `scripts/Roc-script.sh`
+- 太乙若要扩展应用安装空间，请先在 eMMC 上准备一个 `ext4` 分区，并设置文件系统标签为 `extroot`
 - 固件编译完成后，可在仓库 Releases 对应标签下载镜像

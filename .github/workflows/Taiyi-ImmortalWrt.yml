@@ -151,7 +151,7 @@ jobs:
           ### 📒 固件信息
           - 该固件仅面向太乙（`jdcloud_re-cs-07`），默认主题为 Aurora。
           - 保留路由器基础管理能力，并只集成 HomeProxy、OpenClash、Lucky、Watchcat、banIP、Dufs、FileBrowser、Vlmcsd、iStore 及 Docker/NAS 相关入口。
-          - 太乙版本保留 squashfs 固件升级路径，并在首次启动时自动将 overlay 迁移到 eMMC 空闲空间，避免应用更新被系统 overlay 空间限制。
+          - 太乙版本保留 squashfs 固件升级路径，固件不会自动改动分区；仅当系统检测到已存在的 `extroot` 分区时，才会迁移 overlay 以扩展应用安装空间。
           - 💻 这是 ${{ env.FIRMWARE_TAG }} 平台使用的 OpenWrt 固件
           - ⚽ 固件源码: ${{ env.REPO_URL }}
           - 💝 源码分支: ${{ env.REPO_BRANCH }}
