@@ -159,6 +159,7 @@ filter_backup() {
       /(^|\/)\.\.(\/|$)/ { next }
       /^etc\/openclash\/core(\/|$)/ { next }
       /^etc\/openclash\/clash$/ { next }
+      /^etc\/nikki\/run\/providers\/(rule|proxy)(\/|$)/ { print; next }
       /^etc\/nikki\/(run|ucode|scripts|nftables)(\/|$)/ { next }
       /^etc\/apk\/repositories.d\/distfeeds.list$/ { next }
       { print }

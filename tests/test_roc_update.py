@@ -64,10 +64,10 @@ class UpdateTests(unittest.TestCase):
             self.assertNotEqual(self.call('validate_metadata "$1"', path).returncode, 0)
 
     def test_core_executable_excluded_but_private_configs_retained(self):
-        entries = 'etc/openclash/core/clash_meta\netc/openclash/clash\netc/openclash/config/my profile.yaml\netc/openclash/custom/rules.list\netc/config/lucky.daji/cert.pem\netc/tailscale/tailscaled.state\netc/uci-defaults/10_disable_services\netc/apk/repositories.d/distfeeds.list\n'
+        entries = 'etc/openclash/core/clash_meta\netc/openclash/clash\netc/openclash/config/my profile.yaml\netc/openclash/custom/rules.list\netc/config/lucky.daji/cert.pem\netc/tailscale/tailscaled.state\netc/nikki/run/providers/rule/user.yaml\netc/nikki/run/config.yaml\netc/uci-defaults/10_disable_services\netc/apk/repositories.d/distfeeds.list\n'
         result = self.call('filter_backup', input=entries)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout, 'etc/openclash/config/my profile.yaml\netc/openclash/custom/rules.list\netc/config/lucky.daji/cert.pem\netc/tailscale/tailscaled.state\netc/uci-defaults/10_disable_services\n')
+        self.assertEqual(result.stdout, 'etc/openclash/config/my profile.yaml\netc/openclash/custom/rules.list\netc/config/lucky.daji/cert.pem\netc/tailscale/tailscaled.state\netc/nikki/run/providers/rule/user.yaml\netc/uci-defaults/10_disable_services\n')
 
     def test_absent_or_wrong_confirmation_never_flashes(self):
         with tempfile.TemporaryDirectory() as directory:
