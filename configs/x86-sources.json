@@ -27,6 +27,10 @@
     "istore": {
       "url": "https://github.com/linkease/istore.git",
       "ref": "HEAD"
+    },
+    "helloworld": {
+      "url": "https://github.com/fw876/helloworld.git",
+      "ref": "HEAD"
     }
   },
   "extras": {

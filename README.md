@@ -17,6 +17,7 @@ x86 额外配置保留原有 LuCI 应用、存储/USB/igc 驱动、PPPoE、OpenC
 - 新内核的 x86/64 显示继续使用 DRM/i915，旧 fbdev 包已限制为 legacy/geode；Netfilter 日志采用合并后的 `kmod-nf-log`，iptables 功能由现有 ipt/nft 兼容模块承接。输入与 USB 打印显式启用其支持包。
 - 当前上游 Argon 已整合原 `luci-app-argon-config`，使用主题内置配置入口，旧设置交由上游迁移。
 - Tailscale 的 OpenWrt 包关闭了不适用的自更新，统一通过固件更新；社区界面源包含旧 auto-update 设置的兼容修复。
+- 默认 feed 已移除的 Shadowsocks-libev/SSR 命令由仍提供对应包的 `fw876/helloworld` 源补齐，仅安装现有工具所需包并随该源更新。
 - 原系统的 `gecoosac` 已找到公开维护源及带 SHA256 的核心下载定义，随该源更新，保留此功能。不会从设备直接复制二进制上传 GitHub。
 - Lucky 等跨版本的业务配置兼容仍需要升级后验收；CI 成功与镜像检查通过不代表服务已在实机恢复。
 
