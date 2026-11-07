@@ -40,6 +40,8 @@ def required_config(repo=REPO):
     values.pop('CONFIG_PACKAGE_sqm-scripts-nss', None)
     # Current Argon includes the former standalone configuration application.
     values.pop('CONFIG_PACKAGE_luci-app-argon-config', None)
+    # Single-profile x86 no longer exposes the per-device rootfs switch.
+    values.pop('CONFIG_TARGET_PER_DEVICE_ROOTFS', None)
     return values
 
 
@@ -130,6 +132,11 @@ def prepare(source, repo):
         f'src-git {name} {e["url"]}^{e["commit"]}\n' for name, e in lock['feeds'].items()))
     for name, entry in lock['extras'].items():
         checkout(entry, source / 'package/roc' / name)
+    # Only the selected stable provider is needed. Registering the unused alpha
+    # provider too creates mutually negative Kconfig dependencies upstream.
+    alpha = source / 'package/roc/nikki/mihomo-alpha'
+    if alpha.exists():
+        shutil.rmtree(alpha)
     # Override only packages whose explicitly locked upstream replaces a feed copy.
     for relative in ('feeds/luci/applications/luci-app-openclash',
                      'feeds/luci/applications/luci-app-tailscale-community'):
@@ -141,9 +148,13 @@ def prepare(source, repo):
         index = source / 'feeds' / f'{name}.index'
         if not index.exists() or index.stat().st_size == 0:
             raise ValueError(f'Feed index generation failed: {name}')
-    run('./scripts/feeds', 'install', '-a', cwd=source)
-    install_overlay(source, repo)
+    # Install requested packages and their recursive dependencies, rather than
+    # unrelated LuCI/Qt/audio packages whose Kconfig can break this router build.
     requested = required_config(repo)
+    packages = [k.removeprefix('CONFIG_PACKAGE_') for k, v in requested.items()
+                if k.startswith('CONFIG_PACKAGE_') and v == 'y']
+    run('./scripts/feeds', 'install', *packages, cwd=source)
+    install_overlay(source, repo)
     (source / '.config').write_text(''.join(f'{k}={v}\n' for k, v in requested.items()))
     (source / 'sources.lock.json').write_text(json.dumps(lock, indent=2) + '\n')
 

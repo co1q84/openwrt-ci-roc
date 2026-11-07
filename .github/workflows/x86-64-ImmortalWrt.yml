@@ -27,6 +27,8 @@ jobs:
     steps:
       - name: Checkout build repository
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Verify build and upgrade guards
         run: |
@@ -94,6 +96,7 @@ jobs:
             /mnt/openwrt/tmp/.packageinfo
           if-no-files-found: warn
           retention-days: 14
+          include-hidden-files: true
 
       - name: Publish complete release
         env:

@@ -14,6 +14,7 @@ x86 产物发布到独立的 `x86-64-运行编号-尝试次数` 标签。先以�
 
 x86 额外配置保留原有 LuCI 应用、存储/USB/igc 驱动、PPPoE、OpenClash、Lucky、Tailscale、Docker、Nikki、OpenAppFilter、SQM、打印、共享、frp、HAProxy 等能力，也保留原仓库选择的其他功能。依赖库由上游解析；不将运行配置放入编译仓库。
 
+- 新内核的 x86/64 显示继续使用 DRM/i915，旧 fbdev 包已限制为 legacy/geode；Netfilter 日志采用合并后的 `kmod-nf-log`，iptables 功能由现有 ipt/nft 兼容模块承接。输入与 USB 打印显式启用其支持包。
 - 当前上游 Argon 已整合原 `luci-app-argon-config`，使用主题内置配置入口，旧设置交由上游迁移。
 - Tailscale 的 OpenWrt 包关闭了不适用的自更新，统一通过固件更新；社区界面源包含旧 auto-update 设置的兼容修复。
 - 原系统的 `gecoosac` 已找到公开维护源及带 SHA256 的核心下载定义，随该源更新，保留此功能。不会从设备直接复制二进制上传 GitHub。
