@@ -53,6 +53,10 @@
     "aurora": {
       "url": "https://github.com/eamonxg/luci-theme-aurora.git",
       "ref": "HEAD"
+    },
+    "gecoosac": {
+      "url": "https://github.com/laipeng668/luci-app-gecoosac.git",
+      "ref": "HEAD"
     }
   }
 }
