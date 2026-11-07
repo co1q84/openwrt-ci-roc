@@ -76,21 +76,53 @@ get_release() {
     head -35 "$WORK/package-diff.txt"
 }
 
-read_device_layout() {
-    . /lib/functions.sh
-    . /lib/upgrade/common.sh
+openwrt_call() (
+    # Upstream OpenWrt libraries intentionally read optional unset variables.
+    # Isolate their environment so the updater itself keeps nounset enabled.
+    set +u
+    . "$1/functions.sh"
+    . "$1/upgrade/common.sh"
+    shift
+    export VERBOSE=0
+    "$@"
+)
+
+normalize_partitions() {
+    [ "$(dd if="$1" bs=1 skip=512 count=8 2>/dev/null)" = 'EFI PART' ] || {
+        fail '需要 GPT/EFI 分区表'; return 1
+    }
+    while read -r number start sectors; do
+        type=$(hexdump -v -n 16 -s "$((1024 + (number - 1) * 128))" -e '16/1 "%02x"' "$1") || return 1
+        [ "${#type}" -eq 32 ] || { fail '无法读取 GPT 分区类型'; return 1; }
+        # ptgen reserves a tiny GPT BIOS-boot partition for GRUB. Keep real data partitions.
+        [ "$type" != 4861682149646f6e744e656564454649 ] || continue
+        printf '%s\t%s\t%s\n' "$number" "$start" "$sectors"
+    done
+}
+
+partition_map() {
+    rm -f "/tmp/partmap.roc-$$"
+    get_partitions "$1" "roc-$$" || return 1
+    [ -s "/tmp/partmap.roc-$$" ] || { fail '无法读取分区表'; return 1; }
+    normalize_partitions "$1" < "/tmp/partmap.roc-$$" || return 1
+    rm -f "/tmp/partmap.roc-$$"
+}
+
+device_map() {
     if ! export_bootdevice || ! export_partdevice DISK 0; then
         fail '无法确定当前启动盘'; return 1
     fi
-    get_partitions "/dev/$DISK" "roc-device-$$" || return 1
-    [ -s "/tmp/partmap.roc-device-$$" ] || { fail '无法读取启动盘分区'; return 1; }
-    awk '{print $1 "\t" $2 "\t" $3}' "/tmp/partmap.roc-device-$$" > "$WORK/device.partitions"
-    rm -f "/tmp/partmap.roc-device-$$"
+    printf '%s\n' "$DISK" > "$WORK/boot-device"
+    partition_map "/dev/$DISK"
+}
+
+read_device_layout() {
+    openwrt_call /lib device_map > "$WORK/device.partitions" || return 1
     jq -r '.image.partitions[] | @tsv' "$WORK/release.json" > "$WORK/expected.partitions"
     cmp -s "$WORK/device.partitions" "$WORK/expected.partitions" || {
         fail '当前启动盘与新镜像分区布局不同，需人工迁移，禁止自动写整盘'; return 1;
     }
-    printf '已核对当前启动盘：/dev/%s（不会按固定 sda/sdb 选择磁盘）\n' "$DISK"
+    printf '已核对当前启动盘：/dev/%s（不会按固定 sda/sdb 选择磁盘）\n' "$(cat "$WORK/boot-device")"
 }
 
 prepare_image() {
@@ -105,10 +137,7 @@ prepare_image() {
     gzip -t "$IMAGE" || return 1
     # Only a header is needed; gzip may receive SIGPIPE once dd has read it.
     gzip -dc "$IMAGE" | dd of="$WORK/image.header" bs=512 count=512 2>/dev/null
-    get_partitions "$WORK/image.header" "roc-image-$$" || return 1
-    [ -s "/tmp/partmap.roc-image-$$" ] || { fail '镜像分区表无效'; return 1; }
-    awk '{print $1 "\t" $2 "\t" $3}' "/tmp/partmap.roc-image-$$" > "$WORK/image.partitions"
-    rm -f "/tmp/partmap.roc-image-$$"
+    openwrt_call /lib partition_map "$WORK/image.header" > "$WORK/image.partitions" || return 1
     cmp -s "$WORK/image.partitions" "$WORK/expected.partitions" || { fail '镜像实际分区与元数据不同'; return 1; }
     sysupgrade -T "$IMAGE" || { fail 'sysupgrade 镜像检查未通过'; return 1; }
 }
@@ -167,7 +196,7 @@ main() {
     if [ "$mode" = upgrade ]; then
         [ -t 0 ] || { fail '升级必须在交互终端手动确认'; exit 1; }
     fi
-    for tool in curl jq sha256sum gzip tar apk sysupgrade cmp; do
+    for tool in curl jq sha256sum gzip tar apk sysupgrade cmp hexdump; do
         command -v "$tool" >/dev/null || { fail "缺少命令：$tool"; exit 1; }
     done
     check_device
