@@ -1,3 +1,8 @@
+# x86 uses its locked preparation path; leave Taiyi's existing behavior intact.
+if [ "${ROC_TARGET:-}" = "x86-64" ]; then
+    exec python3 "$GITHUB_WORKSPACE/scripts/x86-build.py" prepare "$PWD" --repo "$GITHUB_WORKSPACE"
+fi
+
 # 修改默认IP、主机名与版本显示
 sed -i 's/192.168.1.1/192.168.100.1/g' package/base-files/files/bin/config_generate
 sed -i "s/hostname='.*'/hostname='Roc'/g" package/base-files/files/bin/config_generate

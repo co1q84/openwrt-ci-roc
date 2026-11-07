@@ -1,0 +1,192 @@
+#!/bin/sh
+# Public standalone entry for J4125 firmware updates. No unattended flashing.
+# shellcheck disable=SC1091
+set -eu
+umask 077
+
+REPOSITORY=co1q84/openwrt-ci-roc
+DOWNLOAD_BASE=https://github.com/$REPOSITORY/releases/download
+
+fail() { printf '停止：%s\n' "$*" >&2; return 1; }
+
+download() {
+    curl --fail --location --retry 3 --connect-timeout 20 --proto '=https' --tlsv1.2 \
+        --silent --show-error "$1" -o "$2.part" || return 1
+    mv "$2.part" "$2"
+}
+
+verify_asset() {
+    [ -s "$1" ] || { fail '下载文件为空'; return 1; }
+    if command -v sha256sum >/dev/null 2>&1; then
+        actual=$(sha256sum "$1" | cut -d ' ' -f 1)
+    else
+        actual=$(shasum -a 256 "$1" | cut -d ' ' -f 1)
+    fi
+    [ "$actual" = "$2" ] || { fail 'SHA256 不匹配'; return 1; }
+}
+
+validate_metadata() {
+    jq -e '
+      .schema == 1 and .repository == "co1q84/openwrt-ci-roc" and
+      (.tag | test("^x86-64-[0-9]+-[0-9]+$")) and
+      .target == "x86/64" and .device == "J4125-4L" and
+      .image.boot == "efi" and .image.filesystem == "squashfs" and
+      (.image.name | test("^immortalwrt-x86-64-generic-squashfs-combined-efi[.]img[.]gz$")) and
+      (.image.sha256 | test("^[0-9a-f]{64}$")) and
+      (.image.size | type == "number" and . > 0) and
+      (.image.partitions | length == 2) and
+      .image.partitions[0][0] == 1 and .image.partitions[0][2] == 131072 and
+      .image.partitions[1][0] == 2 and .image.partitions[1][2] == 1966080 and
+      .image.partitions[0][1] > 0 and
+      .image.partitions[1][1] >= (.image.partitions[0][1] + 131072)
+    ' "$1" >/dev/null || { fail '发布元数据或硬件/分区类型不匹配'; return 1; }
+}
+
+check_device() {
+    [ "$(uname -m)" = x86_64 ] || { fail '需要 x86_64'; return 1; }
+    [ -d /sys/firmware/efi ] || { fail '当前系统不是 UEFI 启动'; return 1; }
+    [ "$(cat /sys/class/dmi/id/product_name)" = J4125-4L ] || { fail '设备型号不匹配'; return 1; }
+    grep -q ' /rom squashfs ' /proc/mounts || { fail '当前根文件系统不是 squashfs'; return 1; }
+}
+
+get_release() {
+    download "https://api.github.com/repos/$REPOSITORY/releases?per_page=30" "$WORK/releases.json" || return 1
+    TAG=$(jq -er '[.[] | select(.draft == false and .prerelease == false) |
+        select(.tag_name | test("^x86-64-[0-9]+-[0-9]+$"))][0].tag_name // empty' "$WORK/releases.json") || {
+        fail '尚无经过校验的 x86 固件发布'; return 1;
+    }
+    download "$DOWNLOAD_BASE/$TAG/release.json" "$WORK/release.json" || return 1
+    validate_metadata "$WORK/release.json" || return 1
+    [ "$(jq -r .tag "$WORK/release.json")" = "$TAG" ] || { fail '发布标签不一致'; return 1; }
+    printf '可用固件：%s\n' "$TAG"
+    jq -r '"内核：\(.kernel)  构建时间：\(.built_at)"' "$WORK/release.json"
+    if [ -r /etc/roc-build.json ]; then
+        jq -r '"当前固件：\(.tag)"' /etc/roc-build.json
+    fi
+    apk list --installed 2>/dev/null | jq -Rn '
+      [inputs | split(" ")[0] | try capture("^(?<name>.+)-(?<version>[0-9][^-]*(?:-r[0-9]+)?)$") |
+       {key:.name,value:.version}] | from_entries' > "$WORK/installed.json" || return 1
+    jq -r --slurpfile old "$WORK/installed.json" '
+      .packages as $new |
+      ($new | to_entries[] | select($old[0][.key] != .value) |
+        "\(.key): \($old[0][.key] // "未安装") -> \(.value)"),
+      ($old[0] | keys[] | select($new[.] == null) | "\(.): 新镜像未集成")
+    ' "$WORK/release.json" > "$WORK/package-diff.txt" || return 1
+    printf '包差异共 %s 项，完整列表：%s/package-diff.txt\n' "$(wc -l < "$WORK/package-diff.txt")" "$WORK"
+    head -35 "$WORK/package-diff.txt"
+}
+
+read_device_layout() {
+    . /lib/functions.sh
+    . /lib/upgrade/common.sh
+    if ! export_bootdevice || ! export_partdevice DISK 0; then
+        fail '无法确定当前启动盘'; return 1
+    fi
+    get_partitions "/dev/$DISK" "roc-device-$$" || return 1
+    [ -s "/tmp/partmap.roc-device-$$" ] || { fail '无法读取启动盘分区'; return 1; }
+    awk '{print $1 "\t" $2 "\t" $3}' "/tmp/partmap.roc-device-$$" > "$WORK/device.partitions"
+    rm -f "/tmp/partmap.roc-device-$$"
+    jq -r '.image.partitions[] | @tsv' "$WORK/release.json" > "$WORK/expected.partitions"
+    cmp -s "$WORK/device.partitions" "$WORK/expected.partitions" || {
+        fail '当前启动盘与新镜像分区布局不同，需人工迁移，禁止自动写整盘'; return 1;
+    }
+    printf '已核对当前启动盘：/dev/%s（不会按固定 sda/sdb 选择磁盘）\n' "$DISK"
+}
+
+prepare_image() {
+    read_device_layout || return 1
+    IMAGE="$WORK/$(jq -r .image.name "$WORK/release.json")"
+    size=$(jq -r .image.size "$WORK/release.json")
+    free_kb=$(df -Pk /tmp | awk 'END {print $4}')
+    [ "$free_kb" -gt "$((size * 2 / 1024 + 524288))" ] || { fail '/tmp 空间不足'; return 1; }
+    download "$DOWNLOAD_BASE/$TAG/$(basename "$IMAGE")" "$IMAGE" || return 1
+    verify_asset "$IMAGE" "$(jq -r .image.sha256 "$WORK/release.json")" || return 1
+    [ "$(wc -c < "$IMAGE")" -eq "$size" ] || { fail '镜像大小不匹配'; return 1; }
+    gzip -t "$IMAGE" || return 1
+    # Only a header is needed; gzip may receive SIGPIPE once dd has read it.
+    gzip -dc "$IMAGE" | dd of="$WORK/image.header" bs=512 count=512 2>/dev/null
+    get_partitions "$WORK/image.header" "roc-image-$$" || return 1
+    [ -s "/tmp/partmap.roc-image-$$" ] || { fail '镜像分区表无效'; return 1; }
+    awk '{print $1 "\t" $2 "\t" $3}' "/tmp/partmap.roc-image-$$" > "$WORK/image.partitions"
+    rm -f "/tmp/partmap.roc-image-$$"
+    cmp -s "$WORK/image.partitions" "$WORK/expected.partitions" || { fail '镜像实际分区与元数据不同'; return 1; }
+    sysupgrade -T "$IMAGE" || { fail 'sysupgrade 镜像检查未通过'; return 1; }
+}
+
+filter_backup() {
+    # Preserve private configuration/identities and disabled-service state, not old program code.
+    awk '
+      /^\// { sub(/^\//, "") }
+      /(^|\/)\.\.(\/|$)/ { next }
+      /^etc\/openclash\/core(\/|$)/ { next }
+      /^etc\/openclash\/clash$/ { next }
+      /^etc\/nikki\/(run|ucode|scripts|nftables)(\/|$)/ { next }
+      /^etc\/apk\/repositories.d\/distfeeds.list$/ { next }
+      { print }
+    '
+}
+
+make_backup() {
+    sysupgrade -b "$WORK/full-backup.tar.gz" || { fail '配置备份失败'; return 1; }
+    gzip -t "$WORK/full-backup.tar.gz" || return 1
+    mkdir "$WORK/migration"
+    tar -tzf "$WORK/full-backup.tar.gz" > "$WORK/backup-members.txt" || return 1
+    filter_backup < "$WORK/backup-members.txt" > "$WORK/migration-members.txt"
+    tar -xzf "$WORK/full-backup.tar.gz" -C "$WORK/migration" -T "$WORK/migration-members.txt" || return 1
+    for config in network dropbear system luci; do
+        [ -s "$WORK/migration/etc/config/$config" ] || { fail "缺少必要配置：$config"; return 1; }
+    done
+    # These directories contain user secrets; never print their contents or upload them.
+    for directory in /etc/config/lucky.daji /etc/tailscale /etc/openclash/config /etc/openclash/custom; do
+        if [ -d "$directory" ]; then
+            mkdir -p "$WORK/migration$directory"
+            cp -a "$directory/." "$WORK/migration$directory/" || return 1
+        fi
+    done
+    tar -czf "$WORK/migration-backup.tar.gz" -C "$WORK/migration" . || return 1
+    gzip -t "$WORK/migration-backup.tar.gz" || return 1
+    verify_backup="$WORK/migration-backup.tar.gz"
+    BACKUP_SHA=$(sha256sum "$verify_backup" | cut -d ' ' -f 1)
+    printf '\n请通过现有 SSH/SCP 保存到自己的电脑，勿上传 GitHub：\n%s/full-backup.tar.gz\n%s/migration-backup.tar.gz\n' "$WORK" "$WORK"
+    printf '完整备份用于恢复旧系统；迁移备份排除了旧 OpenClash 核心与包代码。\n'
+}
+
+confirm_upgrade() {
+    printf '确认两个备份已保存到电脑后，输入 BACKUP-SAVED：'
+    IFS= read -r reply || return 1
+    [ "$reply" = BACKUP-SAVED ] || { fail '未确认已留存备份'; return 1; }
+    printf '即将升级并重启。输入完整版本号 %s 确认：' "$1"
+    IFS= read -r reply || return 1
+    [ "$reply" = "$1" ] || { fail '未确认升级'; return 1; }
+}
+
+main() {
+    mode=${1:-check}
+    case "$mode" in check|prepare|upgrade) ;; *) fail '用法：roc-update [check|prepare|upgrade]'; exit 1;; esac
+    [ "$(id -u)" = 0 ] || { fail '需要 root'; exit 1; }
+    if [ "$mode" = upgrade ]; then
+        [ -t 0 ] || { fail '升级必须在交互终端手动确认'; exit 1; }
+    fi
+    for tool in curl jq sha256sum gzip tar apk sysupgrade cmp; do
+        command -v "$tool" >/dev/null || { fail "缺少命令：$tool"; exit 1; }
+    done
+    check_device
+    WORK=$(mktemp -d /tmp/roc-update.XXXXXX)
+    printf '本次临时目录：%s\n' "$WORK"
+    get_release
+    [ "$mode" != check ] || return 0
+    prepare_image
+    make_backup
+    [ "$mode" != prepare ] || return 0
+    confirm_upgrade "$TAG"
+    # Recheck immediately before the only flashing command. No force/reset/whole-disk flags.
+    check_device
+    read_device_layout
+    verify_asset "$IMAGE" "$(jq -r .image.sha256 "$WORK/release.json")"
+    verify_asset "$WORK/migration-backup.tar.gz" "$BACKUP_SHA"
+    sysupgrade -T "$IMAGE"
+    sysupgrade -f "$WORK/migration-backup.tar.gz" "$IMAGE"
+}
+
+# This also permits sourcing the validation functions without starting an update.
+case "${0##*/}" in roc-update|roc-update.sh) main "$@";; esac

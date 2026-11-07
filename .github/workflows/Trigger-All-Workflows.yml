@@ -10,4 +10,6 @@ jobs:
     uses: ./.github/workflows/Taiyi-ImmortalWrt.yml
 
   x86-64-ImmortalWrt:
+    permissions:
+      contents: write
     uses: ./.github/workflows/x86-64-ImmortalWrt.yml

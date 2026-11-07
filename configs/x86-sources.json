@@ -1,0 +1,58 @@
+{
+  "source": {
+    "url": "https://github.com/immortalwrt/immortalwrt.git",
+    "ref": "HEAD"
+  },
+  "feeds": {
+    "packages": {
+      "url": "https://github.com/immortalwrt/packages.git",
+      "ref": "HEAD"
+    },
+    "luci": {
+      "url": "https://github.com/immortalwrt/luci.git",
+      "ref": "HEAD"
+    },
+    "routing": {
+      "url": "https://github.com/openwrt/routing.git",
+      "ref": "HEAD"
+    },
+    "telephony": {
+      "url": "https://github.com/openwrt/telephony.git",
+      "ref": "HEAD"
+    },
+    "video": {
+      "url": "https://github.com/openwrt/video.git",
+      "ref": "HEAD"
+    },
+    "istore": {
+      "url": "https://github.com/linkease/istore.git",
+      "ref": "HEAD"
+    }
+  },
+  "extras": {
+    "OpenClash": {
+      "url": "https://github.com/vernesong/OpenClash.git",
+      "ref": "HEAD"
+    },
+    "lucky": {
+      "url": "https://github.com/gdy666/luci-app-lucky.git",
+      "ref": "HEAD"
+    },
+    "nikki": {
+      "url": "https://github.com/nikkinikki-org/OpenWrt-nikki.git",
+      "ref": "HEAD"
+    },
+    "OpenAppFilter": {
+      "url": "https://github.com/destan19/OpenAppFilter.git",
+      "ref": "HEAD"
+    },
+    "tailscale-ui": {
+      "url": "https://github.com/Tokisaki-Galaxy/luci-app-tailscale-community.git",
+      "ref": "HEAD"
+    },
+    "aurora": {
+      "url": "https://github.com/eamonxg/luci-theme-aurora.git",
+      "ref": "HEAD"
+    }
+  }
+}
