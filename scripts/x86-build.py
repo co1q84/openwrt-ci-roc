@@ -120,11 +120,21 @@ def install_overlay(source, repo):
     core.symlink_to('/usr/bin/mihomo')
 
 
-def prepare(source, repo):
+def stamp_build(source, lock, tag):
+    if not re.fullmatch(r'x86-64-[0-9]+-[0-9]+', tag):
+        raise ValueError('Build identity requires an immutable CI release tag')
+    path = source / 'files/etc/roc-build.json'
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({'schema': 1, 'tag': tag,
+                                'source_commit': lock['source']['commit']}, indent=2) + '\n')
+
+
+def prepare(source, repo, tag=None):
     lock_path = repo / 'configs/x86-sources.json'
     # Resolve fresh heads on EVERY run, then freeze only this run's inputs.
     lock = resolve_sources(json.loads(lock_path.read_text()))
     checkout(lock['source'], source)
+    (source / 'sources.lock.json').write_text(json.dumps(lock, indent=2) + '\n')
     for name, entry in lock['feeds'].items():
         checkout(entry, source / 'feeds' / name)
     # update -i only generates indices. It cannot advance the checked-out commits.
@@ -155,6 +165,8 @@ def prepare(source, repo):
                 if k.startswith('CONFIG_PACKAGE_') and v == 'y']
     run('./scripts/feeds', 'install', *packages, cwd=source)
     install_overlay(source, repo)
+    if tag:
+        stamp_build(source, lock, tag)
     (source / '.config').write_text(''.join(f'{k}={v}\n' for k, v in requested.items()))
     (source / 'sources.lock.json').write_text(json.dumps(lock, indent=2) + '\n')
 
@@ -258,7 +270,7 @@ def main():
     parser.add_argument('--tag')
     args = parser.parse_args()
     if args.command == 'prepare':
-        prepare(args.source.resolve(), args.repo.resolve())
+        prepare(args.source.resolve(), args.repo.resolve(), args.tag)
     elif args.command == 'check-config':
         check_config(args.source / '.config', required_config(args.repo))
         print('Required x86 configuration verified')

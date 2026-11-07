@@ -19,6 +19,7 @@ env:
   OPENWRT_PATH: /mnt/openwrt
   TZ: Asia/Shanghai
   ROC_TARGET: x86-64
+  RECURSIVE_DEP_IS_ERROR: "1"
 
 jobs:
   Build:
@@ -50,7 +51,7 @@ jobs:
 
       - name: Resolve latest sources and freeze this build
         run: |
-          python3 scripts/x86-build.py prepare "$OPENWRT_PATH"
+          python3 scripts/x86-build.py prepare "$OPENWRT_PATH" --tag "x86-64-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           cat "$OPENWRT_PATH/sources.lock.json"
           echo "RELEASE_TAG=x86-64-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_ENV"
 

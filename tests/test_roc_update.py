@@ -6,11 +6,23 @@ import tempfile
 import unittest
 import struct
 import pty
+from test_x86_build import load_build
 
 SCRIPT = Path(__file__).resolve().parents[1] / 'files/x86/usr/sbin/roc-update'
 
 
 class UpdateTests(unittest.TestCase):
+    def test_build_stamp_recognizes_already_installed_release(self):
+        build = load_build()
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory)
+            self.assertTrue(hasattr(build, 'stamp_build'), 'firmware build identity is not stamped')
+            build.stamp_build(source, {'source': {'commit': 'f'*40}}, 'x86-64-123-1')
+            stamp = source / 'files/etc/roc-build.json'
+            self.assertEqual(self.call('is_current_build "$1" "$2"', stamp, 'x86-64-123-1').returncode, 0)
+            self.assertNotEqual(self.call('is_current_build "$1" "$2"', stamp, 'x86-64-124-1').returncode, 0)
+            self.assertNotEqual(self.call('is_current_build "$1" "$2"', source/'absent', 'x86-64-123-1').returncode, 0)
+
     def call(self, expression, *args, input='', tty=False):
         self.assertTrue(SCRIPT.exists(), 'router updater has not been implemented')
         command = ['sh', '-c', '. "$1"; shift; ' + expression,

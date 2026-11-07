@@ -9,6 +9,10 @@ DOWNLOAD_BASE=https://github.com/$REPOSITORY/releases/download
 
 fail() { printf '停止：%s\n' "$*" >&2; return 1; }
 
+is_current_build() {
+    [ -r "$1" ] && jq -e --arg tag "$2" '.schema == 1 and .tag == $tag' "$1" >/dev/null 2>&1
+}
+
 download() {
     curl --fail --location --retry 3 --connect-timeout 20 --proto '=https' --tlsv1.2 \
         --silent --show-error "$1" -o "$2.part" || return 1
@@ -62,6 +66,12 @@ get_release() {
     jq -r '"内核：\(.kernel)  构建时间：\(.built_at)"' "$WORK/release.json"
     if [ -r /etc/roc-build.json ]; then
         jq -r '"当前固件：\(.tag)"' /etc/roc-build.json
+    fi
+    UP_TO_DATE=0
+    if is_current_build /etc/roc-build.json "$TAG"; then
+        UP_TO_DATE=1
+        printf '已经安装当前最新发布，无需重复升级。\n'
+        return 0
     fi
     apk list --installed 2>/dev/null | jq -Rn '
       [inputs | split(" ")[0] | try capture("^(?<name>.+)-(?<version>[0-9][^-]*(?:-r[0-9]+)?)$") |
@@ -203,6 +213,7 @@ main() {
     WORK=$(mktemp -d /tmp/roc-update.XXXXXX)
     printf '本次临时目录：%s\n' "$WORK"
     get_release
+    [ "${UP_TO_DATE:-0}" != 1 ] || return 0
     [ "$mode" != check ] || return 0
     prepare_image
     make_backup
