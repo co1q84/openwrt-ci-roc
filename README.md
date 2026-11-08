@@ -51,11 +51,14 @@ scp -O -P 50222 root@192.168.100.1:/tmp/firmware-update.实际目录/migration-b
 1. 拒绝当前启动盘、可移动设备、有挂载或交换分区的盘及容量不足的盘；拒绝与当前启动盘系统分区 ID 相同的镜像（两盘同时在位会启动错乱）。
 2. 下载并校验发布镜像，做配置备份，要求输入 `ERASE /dev/目标盘`。
 3. 整盘写入镜像并读回比对 SHA256；把 GPT 备份头移到盘尾，从 4 GiB 处创建 ext4 数据分区（`data`），核对系统分区未变。
-4. 在迁移配置中加入数据分区挂载（`/mnt/data`）并把 Docker 数据目录改到 `/mnt/data/docker/`，经 uci 读回确认后写入新启动分区的 `sysupgrade.tgz`，首次启动自动恢复。
+4. 在迁移配置中写入最终状态，经 uci 逐项读回确认后放入新启动分区的 `sysupgrade.tgz`，首次启动自动恢复：
+   - 数据分区挂载到 `/mnt/data`，Docker 数据目录 `/mnt/data/docker/`；
+   - IPv6 仅路由器 WAN 获取（`wan.ipv6=1`、wan6 跟随 PPPoE），LAN 不分配、不通告、不解析 AAAA，代理流量保持 IPv4；
+   - watchcat 检测 223.5.5.5 与 119.29.29.29：10 分钟不通执行 `wan-redial` 重拨，原重启规则周期不变。
 
 完成后在 BIOS 中把 SSD 设为第一启动项，U 盘保留作回退。之后在 SSD 上 `upgrade` 只重写启动与系统分区，数据分区保留；系统分区大小不可再改。
 
-数据分区挂载后，`error-log` 服务只把 warn 及以上级别和 watchcat 事件写到 `/mnt/data/log/error.log`（10 MiB 轮换一份），排除 Tailscale 的常规输出；未挂载时不写系统分区。
+vnstat 流量历史首次启动时默认存到 `/mnt/data/vnstat`、统计 eth0（已设置的不覆盖）。数据分区挂载后，`error-log` 服务只把 warn 及以上级别和 watchcat 事件写到 `/mnt/data/log/error.log`（10 MiB 轮换一份），排除 Tailscale 的常规输出；未挂载时不写系统分区。
 
 ## 恢复与验收
 

@@ -1,0 +1,5 @@
+#!/bin/sh
+# Called by watchcat (run_script mode) when the internet has been unreachable
+# for its period: redial PPPoE before the slower full reboot rule applies.
+logger -p daemon.warn -t wan-redial "internet unreachable, restarting WAN"
+ifup wan

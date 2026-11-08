@@ -215,25 +215,100 @@ image_header() {
     gzip -dc "$1" | dd of="$2" bs=512 count=512 2>/dev/null || :
 }
 
+# Migration edits work on copies with a unique package name. This uci cannot
+# commit from a private save directory, and staged deltas under live names
+# (network, dhcp...) could be applied to the running system by LuCI.
+uci_name() { printf 'fwmig%s_%s' "$$" "$1"; }
+
+uci_get() {
+    # uci_get PACKAGE OPTION from the private copy (created on first use).
+    name=$(uci_name "$1")
+    [ -f "$WORK/uci-edit/$name" ] || { mkdir -p "$WORK/uci-edit" && cp "$conf/$1" "$WORK/uci-edit/$name"; } || return 1
+    uci -q -c "$WORK/uci-edit" get "$name.$2"
+}
+
+uci_edit() {
+    # uci_edit PACKAGE < batch lines written against "PKG."
+    name=$(uci_name "$1")
+    save=${UCI_SAVEDIR:-/tmp/.uci}
+    [ -f "$WORK/uci-edit/$name" ] || { mkdir -p "$WORK/uci-edit" && cp "$conf/$1" "$WORK/uci-edit/$name"; } || return 1
+    [ ! -e "$save/$name" ] || { fail "uci 暂存冲突：$save/$name"; return 1; }
+    { sed "s/ PKG\./ $name./"; printf 'commit %s\n' "$name"; } | uci -q -c "$WORK/uci-edit" batch
+    status=$?
+    rm -f "$save/$name"
+    [ "$status" = 0 ] || { fail "无法修改 $1 配置"; return 1; }
+    cp "$WORK/uci-edit/$name" "$conf/$1"
+}
+
+expect() {
+    [ "$(uci_get "$1" "$2")" = "$3" ] || { fail "迁移配置未生效：$1.$2"; return 1; }
+}
+
 ssd_config() {
-    # The restored configuration mounts the data partition and keeps Docker on it.
-    # Edited as UCI text: this uci cannot commit from a private save directory,
-    # and the shared one could pick up or discard the live system's pending changes.
+    # The first SSD boot restores this configuration in its final state.
     conf=$WORK/migration/etc/config
+    hosts='223.5.5.5 119.29.29.29'
     [ -f "$conf/fstab" ] || printf "config global\n\toption auto_mount '1'\n" > "$conf/fstab"
-    printf "\nconfig mount 'ssd_data'\n\toption target '%s'\n\toption uuid '%s'\n\toption enabled '1'\n" \
-        "$DATA_MOUNT" "$1" >> "$conf/fstab"
+    uci_edit fstab <<EOF || return 1
+set PKG.ssd_data=mount
+set PKG.ssd_data.target=$DATA_MOUNT
+set PKG.ssd_data.uuid=$1
+set PKG.ssd_data.enabled=1
+EOF
+    expect fstab ssd_data.uuid "$1" && expect fstab ssd_data.target "$DATA_MOUNT" &&
+        expect fstab ssd_data.enabled 1 || return 1
     if [ -f "$conf/dockerd" ]; then
-        sed -i "s|^\([[:space:]]*option data_root[[:space:]]\).*|\1'$DATA_MOUNT/docker/'|" "$conf/dockerd"
+        echo "set PKG.globals.data_root=$DATA_MOUNT/docker/" | uci_edit dockerd || return 1
+        expect dockerd globals.data_root "$DATA_MOUNT/docker/" || return 1
     fi
-    # Read back through uci (empty private save dir, read-only) so a silent edit failure stops here.
-    mkdir -p "$WORK/uci-read"
-    get() { uci -q -c "$conf" -P "$WORK/uci-read" get "$1"; }
-    [ "$(get fstab.ssd_data.uuid)" = "$1" ] && [ "$(get fstab.ssd_data.target)" = "$DATA_MOUNT" ] &&
-        [ "$(get fstab.ssd_data.enabled)" = 1 ] || { fail '数据分区挂载配置未生效'; return 1; }
-    if [ -f "$conf/dockerd" ]; then
-        [ "$(get dockerd.globals.data_root)" = "$DATA_MOUNT/docker/" ] || { fail 'Docker 数据目录未生效'; return 1; }
-    fi
+
+    # IPv6 for the router only: WAN obtains it, LAN gets none (proxy stays IPv4).
+    i=0
+    while zone=$(uci_get firewall "@zone[$i].name") && [ "$zone" != wan ]; do i=$((i + 1)); done
+    uci_get firewall "@zone[$i].network" | grep -qw wan6 ||
+        { fail 'wan6 不在防火墙 wan 区域，拒绝开启 IPv6'; return 1; }
+    uci_edit network <<'EOF' || return 1
+set PKG.wan.ipv6=1
+set PKG.wan6=interface
+set PKG.wan6.proto=dhcpv6
+set PKG.wan6.device=@wan
+set PKG.wan6.reqaddress=try
+set PKG.wan6.reqprefix=auto
+set PKG.wan6.disabled=0
+EOF
+    expect network wan.ipv6 1 && expect network wan6.device @wan && expect network wan6.disabled 0 || return 1
+    [ -z "$(uci_get network lan.ip6assign)" ] || { fail 'LAN 配置了 IPv6 分配，与不下发要求冲突'; return 1; }
+    uci_edit dhcp <<'EOF' || return 1
+set PKG.lan.ra=disabled
+set PKG.lan.dhcpv6=disabled
+set PKG.lan.ndp=disabled
+set PKG.@dnsmasq[0].filter_aaaa=1
+EOF
+    expect dhcp lan.ra disabled && expect dhcp lan.dhcpv6 disabled && expect dhcp lan.ndp disabled &&
+        expect dhcp '@dnsmasq[0].filter_aaaa' 1 || return 1
+
+    # Watchcat: check domestic hosts; redial after 10 min, keep the reboot rule's period.
+    [ -f "$conf/watchcat" ] || : > "$conf/watchcat"
+    {
+        i=0
+        while mode=$(uci_get watchcat "@watchcat[$i].mode"); do
+            [ "$mode" != ping_reboot ] || echo "set PKG.@watchcat[$i].pinghosts='$hosts'"
+            i=$((i + 1))
+        done
+        echo "set PKG.wan_redial=watchcat"
+        echo "set PKG.wan_redial.mode=run_script"
+        echo "set PKG.wan_redial.period=10m"
+        echo "set PKG.wan_redial.pinghosts='$hosts'"
+        echo "set PKG.wan_redial.script=/usr/libexec/wan-redial"
+    } > "$WORK/watchcat.batch"
+    uci_edit watchcat < "$WORK/watchcat.batch" || return 1
+    expect watchcat wan_redial.mode run_script && expect watchcat wan_redial.pinghosts "$hosts" || return 1
+    i=0
+    while mode=$(uci_get watchcat "@watchcat[$i].mode"); do
+        [ "$mode" != ping_reboot ] || expect watchcat "@watchcat[$i].pinghosts" "$hosts" || return 1
+        i=$((i + 1))
+    done
+
     tar -czf "$WORK/ssd-config.tar.gz" -C "$WORK/migration" . && gzip -t "$WORK/ssd-config.tar.gz"
 }
 
