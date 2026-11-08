@@ -1,0 +1,37 @@
+#!/bin/sh
+# Keep only abnormal system log events on the SSD data partition, so they
+# survive the reboots that watchcat or a crash cause. Normal logs stay in RAM.
+set -u
+
+MOUNT=${MOUNT:-/mnt/data}
+LOG_DIR=${LOG_DIR:-$MOUNT/log}
+FILE=$LOG_DIR/error.log
+MAX_BYTES=${MAX_BYTES:-10485760}
+BOOT_MARK=${BOOT_MARK:-/tmp/error-log.boot}
+
+# Never write to the small system overlay when the data partition is missing.
+grep -q " $MOUNT " "${PROC_MOUNTS:-/proc/mounts}" || exit 0
+mkdir -p "$LOG_DIR" || exit 1
+
+# logread: "Day Mon DD HH:MM:SS YYYY facility.level tag: message".
+# tailscaled reports ordinary activity at err level, so it is excluded.
+abnormal() {
+    awk '($6 ~ /\.(emerg|alert|crit|err|warn)$/ && $7 !~ /^tailscaled/) || /watchcat/ { print; fflush() }'
+}
+
+events() {
+    # logread -f only follows new messages; copy this boot's earlier ones once.
+    if [ ! -e "$BOOT_MARK" ]; then
+        : > "$BOOT_MARK"
+        printf '==== boot %s, up %s ====\n' "$(date '+%F %T')" "$(cut -d ' ' -f 1 /proc/uptime 2>/dev/null || echo ?)"
+        logread | abnormal
+    fi
+    logread -f | abnormal
+}
+
+events | while IFS= read -r line; do
+    printf '%s\n' "$line" >> "$FILE"
+    if [ "$(wc -c < "$FILE")" -gt "$MAX_BYTES" ]; then
+        mv -f "$FILE" "$FILE.1"
+    fi
+done

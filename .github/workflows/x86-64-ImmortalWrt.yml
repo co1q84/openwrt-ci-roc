@@ -34,7 +34,7 @@ jobs:
       - name: Verify build and upgrade guards
         run: |
           python3 -m unittest discover -s tests -v
-          sh -n files/x86/usr/sbin/roc-update
+          sh -n files/x86/usr/sbin/firmware-update
 
       - name: Prepare runner storage
         uses: sbwml/actions@free-disk
@@ -72,14 +72,11 @@ jobs:
 
       - name: Download sources
         run: |
-          # Archive hashes must use the same tar/xz as the later build. The
-          # runner's older xz emits different bytes for this pinned source.
+          # Archive hashes must use the same tar/xz as the later build; the
+          # runner's older xz can emit different bytes for Git source archives.
           make -C "$OPENWRT_PATH" tools/xz/compile -j"$(nproc)"
           "$OPENWRT_PATH/staging_dir/host/bin/xz" --version
           "$OPENWRT_PATH/staging_dir/host/bin/tar" --version
-          # The aggregate download target can tolerate package failures. Check
-          # this legacy source explicitly before spending hours compiling.
-          make -C "$OPENWRT_PATH" package/feeds/helloworld/shadowsocks-libev/download -j1 V=s
           make -C "$OPENWRT_PATH" download -j8
 
       - name: Build firmware
@@ -120,7 +117,7 @@ jobs:
               f"x86/64 · J4125-4L · UEFI · squashfs · boot 64 MiB / root 960 MiB\n\n"
               f"Kernel: {m['kernel']}\n\n"
               "This build resolves the latest configured source and plugin heads. Exact commits, final config, package manifest, offline APKs and SHA256 are attached.\n\n"
-              "Keep device configuration private. Download roc-update to the router and run it from SSH or the existing LuCI terminal. Check, back up and confirm manually; no unattended flashing.\n\n"
+              "Keep device configuration private. Download firmware-update to the router and run it from SSH or the existing LuCI terminal. Check, back up and confirm manually; no unattended flashing.\n\n"
               "Built and checked in CI; router boot and service acceptance require a separately confirmed upgrade.\n")
           PY
           gh release create "$RELEASE_TAG" release/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "$RELEASE_TAG" --notes-file release-notes.md --draft

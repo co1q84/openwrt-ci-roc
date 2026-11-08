@@ -23,14 +23,6 @@
     "video": {
       "url": "https://github.com/openwrt/video.git",
       "ref": "HEAD"
-    },
-    "istore": {
-      "url": "https://github.com/linkease/istore.git",
-      "ref": "HEAD"
-    },
-    "helloworld": {
-      "url": "https://github.com/fw876/helloworld.git",
-      "ref": "HEAD"
     }
   },
   "extras": {
@@ -46,20 +38,12 @@
       "url": "https://github.com/nikkinikki-org/OpenWrt-nikki.git",
       "ref": "HEAD"
     },
-    "OpenAppFilter": {
-      "url": "https://github.com/destan19/OpenAppFilter.git",
-      "ref": "HEAD"
-    },
     "tailscale-ui": {
       "url": "https://github.com/Tokisaki-Galaxy/luci-app-tailscale-community.git",
       "ref": "HEAD"
     },
-    "gecoosac": {
-      "url": "https://github.com/laipeng668/luci-app-gecoosac.git",
-      "ref": "HEAD"
-    },
-    "luci-theme-aurora": {
-      "url": "https://github.com/eamonxg/luci-theme-aurora.git",
+    "vantage": {
+      "url": "https://github.com/anothaDev/luci-theme-vantage.git",
       "ref": "HEAD"
     }
   }

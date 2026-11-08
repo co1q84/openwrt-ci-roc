@@ -6,6 +6,9 @@ umask 077
 
 REPOSITORY=co1q84/openwrt-ci-roc
 DOWNLOAD_BASE=https://github.com/$REPOSITORY/releases/download
+# SSD data partition: starts at 4 GiB, leaving room should the system area ever grow.
+DATA_START=8388608
+DATA_MOUNT=/mnt/data
 
 fail() { printf '停止：%s\n' "$*" >&2; return 1; }
 
@@ -64,11 +67,11 @@ get_release() {
     [ "$(jq -r .tag "$WORK/release.json")" = "$TAG" ] || { fail '发布标签不一致'; return 1; }
     printf '可用固件：%s\n' "$TAG"
     jq -r '"内核：\(.kernel)  构建时间：\(.built_at)"' "$WORK/release.json"
-    if [ -r /etc/roc-build.json ]; then
-        jq -r '"当前固件：\(.tag)"' /etc/roc-build.json
+    if [ -r /etc/firmware-build.json ]; then
+        jq -r '"当前固件：\(.tag)"' /etc/firmware-build.json
     fi
     UP_TO_DATE=0
-    if is_current_build /etc/roc-build.json "$TAG"; then
+    if is_current_build /etc/firmware-build.json "$TAG"; then
         UP_TO_DATE=1
         printf '已经安装当前最新发布，无需重复升级。\n'
         return 0
@@ -111,11 +114,11 @@ normalize_partitions() {
 }
 
 partition_map() {
-    rm -f "/tmp/partmap.roc-$$"
-    get_partitions "$1" "roc-$$" || return 1
-    [ -s "/tmp/partmap.roc-$$" ] || { fail '无法读取分区表'; return 1; }
-    normalize_partitions "$1" < "/tmp/partmap.roc-$$" || return 1
-    rm -f "/tmp/partmap.roc-$$"
+    rm -f "/tmp/partmap.fwup-$$"
+    get_partitions "$1" "fwup-$$" || return 1
+    [ -s "/tmp/partmap.fwup-$$" ] || { fail '无法读取分区表'; return 1; }
+    normalize_partitions "$1" < "/tmp/partmap.fwup-$$" || return 1
+    rm -f "/tmp/partmap.fwup-$$"
 }
 
 device_map() {
@@ -126,17 +129,28 @@ device_map() {
     partition_map "/dev/$DISK"
 }
 
+layout_compatible() {
+    # Every image partition must exist unchanged. Extra partitions (the SSD data
+    # partition) are kept by sysupgrade and must not overlap the system area.
+    awk -F '\t' '
+      NR == FNR { want[$1] = $0; first = (first == "" || $2 < first) ? $2 : first
+                  end = ($2 + $3 > end) ? $2 + $3 : end; next }
+      $1 in want { if ($0 != want[$1]) bad = 1; seen[$1] = 1; next }
+      { if ($2 < end) bad = 1 }
+      END { for (n in want) if (!(n in seen)) bad = 1; exit bad }
+    ' "$2" "$1"
+}
+
 read_device_layout() {
     openwrt_call /lib device_map > "$WORK/device.partitions" || return 1
     jq -r '.image.partitions[] | @tsv' "$WORK/release.json" > "$WORK/expected.partitions"
-    cmp -s "$WORK/device.partitions" "$WORK/expected.partitions" || {
-        fail '当前启动盘与新镜像分区布局不同，需人工迁移，禁止自动写整盘'; return 1;
+    layout_compatible "$WORK/device.partitions" "$WORK/expected.partitions" || {
+        fail '当前启动盘的系统分区与新镜像不同，需人工迁移，禁止自动写整盘'; return 1;
     }
     printf '已核对当前启动盘：/dev/%s（不会按固定 sda/sdb 选择磁盘）\n' "$(cat "$WORK/boot-device")"
 }
 
 prepare_image() {
-    read_device_layout || return 1
     IMAGE="$WORK/$(jq -r .image.name "$WORK/release.json")"
     size=$(jq -r .image.size "$WORK/release.json")
     free_kb=$(df -Pk /tmp | awk 'END {print $4}')
@@ -145,11 +159,119 @@ prepare_image() {
     verify_asset "$IMAGE" "$(jq -r .image.sha256 "$WORK/release.json")" || return 1
     [ "$(wc -c < "$IMAGE")" -eq "$size" ] || { fail '镜像大小不匹配'; return 1; }
     gzip -t "$IMAGE" || return 1
-    # Only a header is needed; gzip may receive SIGPIPE once dd has read it.
-    gzip -dc "$IMAGE" | dd of="$WORK/image.header" bs=512 count=512 2>/dev/null
+    image_header "$IMAGE" "$WORK/image.header"
     openwrt_call /lib partition_map "$WORK/image.header" > "$WORK/image.partitions" || return 1
     cmp -s "$WORK/image.partitions" "$WORK/expected.partitions" || { fail '镜像实际分区与元数据不同'; return 1; }
     sysupgrade -T "$IMAGE" || { fail 'sysupgrade 镜像检查未通过'; return 1; }
+}
+
+disk_name() { export_bootdevice && export_partdevice DISK 0 && printf '%s\n' "$DISK"; }
+
+boot_disk() {
+    name=$(openwrt_call /lib disk_name) && [ -n "$name" ] || { fail '无法确定当前启动盘'; return 1; }
+    printf '%s\n' "$name"
+}
+
+is_block() { [ -b "$1" ]; }
+
+partition_device() {
+    case "$1" in *[0-9]) printf '%sp%s\n' "$1" "$2";; *) printf '%s%s\n' "$1" "$2";; esac
+}
+
+check_target_disk() {
+    sys=${SYSFS:-/sys}
+    name=${1#/dev/}
+    [ "/dev/$name" = "$1" ] && is_block "$1" && [ -d "$sys/block/$name" ] || {
+        fail "$1 不是整块磁盘"; return 1;
+    }
+    [ "$name" != "$(boot_disk)" ] || { fail "$1 是当前启动盘"; return 1; }
+    [ "$(cat "$sys/block/$name/removable")" = 0 ] || { fail "$1 是可移动设备，不是 SSD"; return 1; }
+    ! grep -q "^/dev/$name" "${PROC_MOUNTS:-/proc/mounts}" || { fail "$1 有已挂载分区"; return 1; }
+    ! grep -q "^/dev/$name" "${PROC_SWAPS:-/proc/swaps}" || { fail "$1 正被用作交换分区"; return 1; }
+    sectors=$(cat "$sys/block/$name/size")
+    [ "$sectors" -gt "$((DATA_START + 4194304))" ] || { fail "$1 容量不足"; return 1; }
+}
+
+root_partuuid() {
+    # GPT entry 2 (rootfs) unique GUID; the bootloader finds root by it.
+    hexdump -v -n 16 -s $((1024 + 128 + 16)) -e '16/1 "%02x"' "$1"
+}
+
+distinct_root_ids() {
+    image_id=$(root_partuuid "$1") && disk_id=$(root_partuuid "$2") || return 1
+    [ "${#image_id}" -eq 32 ] && [ "$image_id" != "$disk_id" ] || {
+        fail '新镜像与当前启动盘的系统分区 ID 相同，两块盘同时在位会启动错乱'; return 1;
+    }
+}
+
+confirm_migration() {
+    printf '将清空 %s 上的全部数据，写入新固件并创建数据分区。\n输入 ERASE %s 确认：' "$1" "$1"
+    IFS= read -r reply || return 1
+    [ "$reply" = "ERASE $1" ] || { fail '未确认清空目标盘'; return 1; }
+}
+
+image_header() {
+    # Only a header is needed; gzip may receive SIGPIPE once dd has read it.
+    gzip -dc "$1" | dd of="$2" bs=512 count=512 2>/dev/null || :
+}
+
+ssd_config() {
+    # The restored configuration mounts the data partition and keeps Docker on it.
+    # Edited as UCI text: this uci cannot commit from a private save directory,
+    # and the shared one could pick up or discard the live system's pending changes.
+    conf=$WORK/migration/etc/config
+    [ -f "$conf/fstab" ] || printf "config global\n\toption auto_mount '1'\n" > "$conf/fstab"
+    printf "\nconfig mount 'ssd_data'\n\toption target '%s'\n\toption uuid '%s'\n\toption enabled '1'\n" \
+        "$DATA_MOUNT" "$1" >> "$conf/fstab"
+    if [ -f "$conf/dockerd" ]; then
+        sed -i "s|^\([[:space:]]*option data_root[[:space:]]\).*|\1'$DATA_MOUNT/docker/'|" "$conf/dockerd"
+    fi
+    # Read back through uci (empty private save dir, read-only) so a silent edit failure stops here.
+    mkdir -p "$WORK/uci-read"
+    get() { uci -q -c "$conf" -P "$WORK/uci-read" get "$1"; }
+    [ "$(get fstab.ssd_data.uuid)" = "$1" ] && [ "$(get fstab.ssd_data.target)" = "$DATA_MOUNT" ] &&
+        [ "$(get fstab.ssd_data.enabled)" = 1 ] || { fail '数据分区挂载配置未生效'; return 1; }
+    if [ -f "$conf/dockerd" ]; then
+        [ "$(get dockerd.globals.data_root)" = "$DATA_MOUNT/docker/" ] || { fail 'Docker 数据目录未生效'; return 1; }
+    fi
+    tar -czf "$WORK/ssd-config.tar.gz" -C "$WORK/migration" . && gzip -t "$WORK/ssd-config.tar.gz"
+}
+
+write_target() {
+    target=$1
+    data=$(partition_device "$target" 4)
+    raw=$(gzip -dc "$IMAGE" | wc -c) || return 1
+    want=$(gzip -dc "$IMAGE" | sha256sum | cut -d ' ' -f 1) || return 1
+    printf '写入 %s ...\n' "$target"
+    gzip -dc "$IMAGE" | dd of="$target" bs=4M conv=fsync 2>/dev/null || { fail '写入失败'; return 1; }
+    sync; echo 3 > /proc/sys/vm/drop_caches
+    got=$(dd if="$target" bs=4M 2>/dev/null | head -c "$raw" | sha256sum | cut -d ' ' -f 1)
+    [ "$got" = "$want" ] || { fail '写入后读回校验不一致'; return 1; }
+    # The image GPT ends at the image size; move the backup header to the disk end.
+    sgdisk -e "$target" >/dev/null || { fail '无法修正 GPT'; return 1; }
+    sgdisk -n "4:$DATA_START:0" -t 4:8300 -c 4:data "$target" >/dev/null || { fail '无法创建数据分区'; return 1; }
+    partx -d - "$target" 2>/dev/null || :
+    partx -a - "$target" || :
+    i=0; while ! is_block "$data" && [ $i -lt 10 ]; do sleep 1; i=$((i + 1)); done
+    is_block "$data" || { fail "找不到 $data"; return 1; }
+    openwrt_call /lib partition_map "$target" > "$WORK/target.partitions" || return 1
+    layout_compatible "$WORK/target.partitions" "$WORK/expected.partitions" || {
+        fail '写入后的分区表与预期不符'; return 1;
+    }
+    mkfs.ext4 -F -q -L data "$data" || { fail '数据分区格式化失败'; return 1; }
+    uuid=$(blkid -s UUID -o value "$data") && [ -n "$uuid" ] || { fail '无法读取数据分区 UUID'; return 1; }
+    ssd_config "$uuid" || { fail '无法生成 SSD 配置'; return 1; }
+    boot=$WORK/target-boot
+    mkdir "$boot"
+    mount -t vfat -o rw,noatime "$(partition_device "$target" 1)" "$boot" || { fail '无法挂载新启动分区'; return 1; }
+    # Preinit moves this file into place and restores it on the first boot.
+    if cp "$WORK/ssd-config.tar.gz" "$boot/sysupgrade.tgz" && sync && cmp -s "$WORK/ssd-config.tar.gz" "$boot/sysupgrade.tgz"; then
+        umount "$boot"
+    else
+        umount "$boot"; fail '配置未能写入新启动分区'; return 1
+    fi
+    printf '\n完成：%s 已写入 %s，数据分区 %s 将挂载到 %s，首次启动自动恢复当前配置。\n' "$TAG" "$target" "$data" "$DATA_MOUNT"
+    printf '当前系统和 U 盘未改动。请在 BIOS 中把 SSD 设为第一启动项；U 盘保留作回退。\n'
 }
 
 filter_backup() {
@@ -159,8 +281,9 @@ filter_backup() {
       /(^|\/)\.\.(\/|$)/ { next }
       /^etc\/openclash\/core(\/|$)/ { next }
       /^etc\/openclash\/clash$/ { next }
-      /^etc\/nikki\/run\/providers\/(rule|proxy)(\/|$)/ { print; next }
-      /^etc\/nikki\/(run|ucode|scripts|nftables)(\/|$)/ { next }
+      # Nikki is no longer built; OpenClash is the only proxy application.
+      /^etc\/nikki(\/|$)/ { next }
+      /^etc\/config\/nikki$/ { next }
       /^etc\/apk\/repositories.d\/distfeeds.list$/ { next }
       { print }
     '
@@ -202,20 +325,29 @@ confirm_upgrade() {
 
 main() {
     mode=${1:-check}
-    case "$mode" in check|prepare|upgrade) ;; *) fail '用法：roc-update [check|prepare|upgrade]'; exit 1;; esac
+    case "$mode" in
+        check|prepare|upgrade) ;;
+        migrate) [ -n "${2:-}" ] || { fail '用法：firmware-update migrate /dev/目标盘'; exit 1; } ;;
+        *) fail '用法：firmware-update [check|prepare|upgrade|migrate /dev/目标盘]'; exit 1;;
+    esac
     [ "$(id -u)" = 0 ] || { fail '需要 root'; exit 1; }
-    if [ "$mode" = upgrade ]; then
-        [ -t 0 ] || { fail '升级必须在交互终端手动确认'; exit 1; }
+    if [ "$mode" = upgrade ] || [ "$mode" = migrate ]; then
+        [ -t 0 ] || { fail '升级和迁移必须在交互终端手动确认'; exit 1; }
     fi
     for tool in curl jq sha256sum gzip tar apk sysupgrade cmp hexdump; do
         command -v "$tool" >/dev/null || { fail "缺少命令：$tool"; exit 1; }
     done
     check_device
-    WORK=$(mktemp -d /tmp/roc-update.XXXXXX)
+    WORK=$(mktemp -d /tmp/firmware-update.XXXXXX)
     printf '本次临时目录：%s\n' "$WORK"
+    if [ "$mode" = migrate ]; then
+        migrate "$2"
+        return
+    fi
     get_release
     [ "${UP_TO_DATE:-0}" != 1 ] || return 0
     [ "$mode" != check ] || return 0
+    read_device_layout
     prepare_image
     make_backup
     [ "$mode" != prepare ] || return 0
@@ -229,5 +361,23 @@ main() {
     sysupgrade -f "$WORK/migration-backup.tar.gz" "$IMAGE"
 }
 
+migrate() {
+    for tool in sgdisk partx mkfs.ext4 blkid uci; do
+        command -v "$tool" >/dev/null || { fail "缺少命令：$tool"; return 1; }
+    done
+    check_target_disk "$1"
+    get_release
+    jq -r '.image.partitions[] | @tsv' "$WORK/release.json" > "$WORK/expected.partitions"
+    prepare_image
+    image_header "$IMAGE" "$WORK/image.header"
+    distinct_root_ids "$WORK/image.header" "/dev/$(boot_disk)"
+    make_backup
+    confirm_migration "$1"
+    # Recheck right before the only destructive step.
+    check_target_disk "$1"
+    verify_asset "$IMAGE" "$(jq -r .image.sha256 "$WORK/release.json")"
+    write_target "$1"
+}
+
 # This also permits sourcing the validation functions without starting an update.
-case "${0##*/}" in roc-update|roc-update.sh) main "$@";; esac
+case "${0##*/}" in firmware-update|firmware-update.sh) main "$@";; esac

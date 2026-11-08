@@ -1,0 +1,12 @@
+#!/bin/sh /etc/rc.common
+# Persist abnormal log events to the SSD data partition (see /usr/libexec/error-log).
+START=99
+USE_PROCD=1
+
+start_service() {
+	grep -q ' /mnt/data ' /proc/mounts || return 0
+	procd_open_instance
+	procd_set_param command /usr/libexec/error-log
+	procd_set_param respawn 3600 5 0
+	procd_close_instance
+}

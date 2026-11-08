@@ -96,6 +96,17 @@ def checkout(entry, destination):
         raise ValueError(f'Checkout mismatch: {destination}')
 
 
+def _drop_theme_selection(line):
+    body = line.lstrip()
+    if 'set luci.main.mediaurlbase=' not in body:
+        return line
+    if body.startswith('set '):
+        return ''  # a line inside a "uci batch" heredoc
+    # A shell command, possibly the only one in an if-block: "then fi" would
+    # be a syntax error, so keep a no-op in its place.
+    return line[:len(line) - len(body)] + ':\n'
+
+
 def install_overlay(source, repo):
     config = source / 'package/base-files/files/bin/config_generate'
     text = config.read_text().replace('192.168.1.1', '192.168.100.1')
@@ -109,7 +120,7 @@ def install_overlay(source, repo):
     for parent in (source / 'feeds/luci/themes', source / 'package/roc'):
         for script in parent.glob('**/root/etc/uci-defaults/30_luci-theme-*'):
             lines = script.read_text().splitlines(keepends=True)
-            script.write_text(''.join(line for line in lines if 'set luci.main.mediaurlbase=' not in line))
+            script.write_text(''.join(_drop_theme_selection(line) for line in lines))
     overlay = repo / 'files/x86'
     if overlay.exists():
         shutil.copytree(overlay, source / 'files', dirs_exist_ok=True, symlinks=True)
@@ -120,36 +131,30 @@ def install_overlay(source, repo):
     core.symlink_to('/usr/bin/mihomo')
 
 
+BOARD_PORTS = ('cnction-j4125-4l)\n'
+               '\t# Match this router: port eth0 is WAN, eth1-eth3 are bridged LAN.\n'
+               '\tucidef_set_interfaces_lan_wan "eth1 eth2 eth3" "eth0"\n'
+               '\t;;\n')
+
+
+def set_board_ports(source):
+    """Factory/reset network layout for this hardware; restored config wins."""
+    path = source / 'target/linux/x86/base-files/etc/board.d/02_network'
+    marker = 'case "$(board_name)" in\n'
+    text = path.read_text() if path.exists() else ''
+    if marker not in text:
+        raise ValueError('Cannot find the x86 board network table to set J4125 ports')
+    if BOARD_PORTS not in text:
+        path.write_text(text.replace(marker, marker + BOARD_PORTS, 1))
+
+
 def stamp_build(source, lock, tag):
     if not re.fullmatch(r'x86-64-[0-9]+-[0-9]+', tag):
         raise ValueError('Build identity requires an immutable CI release tag')
-    path = source / 'files/etc/roc-build.json'
+    path = source / 'files/etc/firmware-build.json'
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({'schema': 1, 'tag': tag,
                                 'source_commit': lock['source']['commit']}, indent=2) + '\n')
-
-
-def apply_source_fixes(source):
-    path = source / 'feeds/helloworld/shadowsocks-libev/Makefile'
-    if not path.exists():
-        return []
-    text = path.read_text()
-    version = '9afa3cacf947f910be46b69fc5a7a1fdd02fd5e6'
-    before = 'b3898ad0a557bc8b0bbb2f3888101d461944239b0b7d4d4c6f164d73694a4595'
-    after = '9d2293f16629d1e30ede304ccddbaaa4e922c1c5e7ea04cef0e9d274aafa6109'
-    expected = {'PKG_NAME': 'shadowsocks-libev', 'PKG_VERSION': '3.3.5',
-                'PKG_SOURCE_PROTO': 'git',
-                'PKG_SOURCE_URL': 'https://github.com/shadowsocks/shadowsocks-libev.git',
-                'PKG_SOURCE_VERSION': version, 'PKG_MIRROR_HASH': before}
-    # Current download.mk creates a formal Git archive, including the pinned
-    # submodules. The feed's old archive hash does not describe those bytes.
-    # Apply only to this known source/hash pair; new upstream definitions win.
-    if not all(f'{key}:={value}\n' in text for key, value in expected.items()):
-        return []
-    path.write_text(text.replace(f'PKG_MIRROR_HASH:={before}\n',
-                                 f'PKG_MIRROR_HASH:={after}\n', 1))
-    return [{'package': 'helloworld/shadowsocks-libev', 'source_version': version,
-             'mirror_hash_before': before, 'mirror_hash_after': after}]
 
 
 def prepare(source, repo, tag=None):
@@ -165,7 +170,8 @@ def prepare(source, repo, tag=None):
         f'src-git {name} {e["url"]}^{e["commit"]}\n' for name, e in lock['feeds'].items()))
     for name, entry in lock['extras'].items():
         checkout(entry, source / 'package/roc' / name)
-    lock['source_fixes'] = apply_source_fixes(source)
+    # This repository now supplies only mihomo-meta, the OpenClash core linked
+    # by install_overlay; the Nikki application itself is not selected.
     # Only the selected stable provider is needed. Registering the unused alpha
     # provider too creates mutually negative Kconfig dependencies upstream.
     alpha = source / 'package/roc/nikki/mihomo-alpha'
@@ -189,6 +195,7 @@ def prepare(source, repo, tag=None):
                 if k.startswith('CONFIG_PACKAGE_') and v == 'y']
     run('./scripts/feeds', 'install', *packages, cwd=source)
     install_overlay(source, repo)
+    set_board_ports(source)
     if tag:
         stamp_build(source, lock, tag)
     (source / '.config').write_text(''.join(f'{k}={v}\n' for k, v in requested.items()))
@@ -264,7 +271,7 @@ def release(source, output, repo, tag):
         shutil.copy2(path, output / path.name)
     shutil.copy2(source / '.config', output / 'x86-64.config')
     shutil.copy2(source / 'sources.lock.json', output / 'sources.lock.json')
-    shutil.copy2(repo / 'files/x86/usr/sbin/roc-update', output / 'roc-update')
+    shutil.copy2(repo / 'files/x86/usr/sbin/firmware-update', output / 'firmware-update')
     if (target / 'sha256sums').exists():
         shutil.copy2(target / 'sha256sums', output / 'upstream-sha256sums')
     # Keep build-matched APKs for offline recovery, never device configuration.

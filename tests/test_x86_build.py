@@ -21,56 +21,22 @@ def load_build():
 
 
 class ConfigurationTests(unittest.TestCase):
-    def prepare_legacy_feed(self, source, source_version, mirror_hash):
+    def test_openclash_core_provider_survives_nikki_removal(self):
         build = load_build()
-        generate = source / 'package/base-files/files/bin/config_generate'
-        generate.parent.mkdir(parents=True)
-        generate.write_text("hostname='ImmortalWrt'\n")
-        feed = source / 'feeds/helloworld'
-        feed.mkdir(parents=True)
-        (source / 'feeds/helloworld.index').write_text('Source-Makefile: shadowsocks-libev/Makefile\n')
-        makefile = feed / 'shadowsocks-libev/Makefile'
-        makefile.parent.mkdir()
-        makefile.write_text(
-            'PKG_NAME:=shadowsocks-libev\nPKG_VERSION:=3.3.5\n'
-            'PKG_SOURCE_PROTO:=git\n'
-            'PKG_SOURCE_URL:=https://github.com/shadowsocks/shadowsocks-libev.git\n'
-            f'PKG_SOURCE_VERSION:={source_version}\n'
-            f'PKG_MIRROR_HASH:={mirror_hash}\n')
-        feeds = source / 'scripts/feeds'
-        feeds.parent.mkdir()
-        feeds.write_text('#!/bin/sh\nexit 0\n')
-        feeds.chmod(0o755)
-        entry = {'url': 'https://github.com/fixture/source.git', 'commit': 'a'*40}
-        lock = {'source': entry, 'feeds': {'helloworld': dict(entry)}, 'extras': {}}
-        # Only GitHub resolution and network checkouts are replaced. Preparation,
-        # feed commands, configuration, overlay and the emitted lock all run.
-        with patch.object(build, 'resolve_sources', return_value=lock), patch.object(build, 'checkout'):
-            build.prepare(source, REPO)
-        return makefile, json.loads((source / 'sources.lock.json').read_text())
+        required = build.required_config(REPO)
+        # install_overlay links OpenClash's core to /usr/bin/mihomo from mihomo-meta.
+        self.assertEqual(required.get('CONFIG_PACKAGE_mihomo-meta'), 'y')
+        self.assertEqual(required.get('CONFIG_PACKAGE_luci-app-openclash'), 'y')
+        self.assertNotEqual(required.get('CONFIG_PACKAGE_nikki', 'n'), 'y')
 
-    def test_prepared_feed_accepts_the_verified_legacy_archive(self):
-        with tempfile.TemporaryDirectory() as directory:
-            makefile, lock = self.prepare_legacy_feed(
-                Path(directory), '9afa3cacf947f910be46b69fc5a7a1fdd02fd5e6',
-                'b3898ad0a557bc8b0bbb2f3888101d461944239b0b7d4d4c6f164d73694a4595')
-            # Independently reproduced by the Ubuntu builder from this exact Git
-            # commit and its three pinned submodules, not from the patched code.
-            archive_digest = '9d2293f16629d1e30ede304ccddbaaa4e922c1c5e7ea04cef0e9d274aafa6109'
-            values = dict(line.split(':=', 1) for line in makefile.read_text().splitlines())
-            self.assertEqual(values['PKG_MIRROR_HASH'], archive_digest)
-            self.assertEqual(lock['source_fixes'][0]['mirror_hash_after'], archive_digest)
-
-    def test_new_upstream_sources_or_hashes_are_not_overwritten(self):
-        old_hash = 'b3898ad0a557bc8b0bbb2f3888101d461944239b0b7d4d4c6f164d73694a4595'
-        for version, digest in [('b'*40, old_hash),
-                                ('9afa3cacf947f910be46b69fc5a7a1fdd02fd5e6', 'c'*64)]:
-            with self.subTest(version=version, digest=digest), tempfile.TemporaryDirectory() as directory:
-                makefile, lock = self.prepare_legacy_feed(Path(directory), version, digest)
-                values = dict(line.split(':=', 1) for line in makefile.read_text().splitlines())
-                self.assertEqual(values['PKG_SOURCE_VERSION'], version)
-                self.assertEqual(values['PKG_MIRROR_HASH'], digest)
-                self.assertFalse(lock.get('source_fixes'))
+    def test_x86_removals_do_not_change_shared_taiyi_selections(self):
+        build = load_build()
+        shared = build.config_values(REPO / 'configs/General.config')
+        x86 = build.required_config(REPO)
+        for name in ('luci-app-samba4', 'luci-app-acme', 'luci-app-banip', 'luci-app-homeproxy',
+                     'luci-app-store', 'luci-app-dufs', 'luci-app-filebrowser-go'):
+            self.assertEqual(shared.get(f'CONFIG_PACKAGE_{name}'), 'y')
+            self.assertEqual(x86.get(f'CONFIG_PACKAGE_{name}'), 'n')
 
     def test_next_build_resolves_new_upstream_commit(self):
         build = load_build()
@@ -151,6 +117,66 @@ class ConfigurationTests(unittest.TestCase):
             subprocess.run(['sh', str(theme)], check=True,
                            env=dict(os.environ, PATH=str(fake)+':'+os.environ['PATH'], SELECTED=str(selected)))
             self.assertEqual(selected.read_text(), '/luci-static/aurora')
+
+
+    def test_conditional_theme_selection_stays_valid_shell(self):
+        build = load_build()
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory)
+            config = source / 'package/base-files/files/bin/config_generate'
+            config.parent.mkdir(parents=True)
+            config.write_text("hostname='ImmortalWrt'\n")
+            # Vantage selects itself inside an if-block; dropping the line leaves "then fi".
+            theme = source / 'package/roc/vantage/luci-theme-vantage/root/etc/uci-defaults/30_luci-theme-vantage'
+            theme.parent.mkdir(parents=True)
+            theme.write_text('uci -q set luci.themes.Vantage=/luci-static/vantage || exit 1\n'
+                             'if [ "$PKG_UPGRADE" != 1 ]; then\n'
+                             '\tuci -q set luci.main.mediaurlbase=/luci-static/vantage\n'
+                             'fi\nuci -q commit luci\n')
+            fake = source / 'bin'
+            fake.mkdir()
+            calls = source / 'calls'
+            uci = fake / 'uci'
+            uci.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$CALLS"\n')
+            uci.chmod(0o755)
+            build.install_overlay(source, REPO)
+            result = subprocess.run(['sh', str(theme)], capture_output=True, text=True,
+                                    env=dict(os.environ, PATH=str(fake)+':'+os.environ['PATH'], CALLS=str(calls)))
+            self.assertEqual(result.returncode, 0, result.stderr)
+            log = calls.read_text()
+            self.assertIn('luci.themes.Vantage=/luci-static/vantage', log)
+            self.assertNotIn('mediaurlbase', log)
+
+
+    def run_board_network(self, script, board):
+        stub = ('board_config_update() { :; }; board_config_flush() { :; }\n'
+                f'board_name() {{ echo {board}; }}\n'
+                'ucidef_set_interfaces_lan_wan() { echo "lan=$1 wan=$2"; }\n'
+                'ucidef_set_interface_lan() { echo "lan=$1"; }\n')
+        body = script.read_text().replace('. /lib/functions/system.sh\n', '').replace(
+            '. /lib/functions/uci-defaults.sh\n', stub)
+        return subprocess.run(['sh', '-c', body], capture_output=True, text=True)
+
+    def test_j4125_factory_ports_match_router_and_other_boards_unchanged(self):
+        build = load_build()
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory)
+            script = source / 'target/linux/x86/base-files/etc/board.d/02_network'
+            script.parent.mkdir(parents=True)
+            script.write_text('. /lib/functions/system.sh\n. /lib/functions/uci-defaults.sh\n'
+                              'board_config_update\n\ncase "$(board_name)" in\n'
+                              'supermicro-sys-e302-9d)\n\tucidef_set_interface_lan "eth0 eth1"\n\t;;\n'
+                              'esac\nboard_config_flush\nexit 0\n')
+            build.set_board_ports(source)
+            result = self.run_board_network(script, 'cnction-j4125-4l')
+            self.assertEqual((result.returncode, result.stdout), (0, 'lan=eth1 eth2 eth3 wan=eth0\n'), result.stderr)
+            self.assertEqual(self.run_board_network(script, 'supermicro-sys-e302-9d').stdout, 'lan=eth0 eth1\n')
+            self.assertEqual(self.run_board_network(script, 'other-board').stdout, '')
+            build.set_board_ports(source)  # a rerun must not add a second entry
+            self.assertEqual(script.read_text().count('cnction-j4125-4l)'), 1)
+            script.write_text('upstream rewrote this file\n')
+            with self.assertRaisesRegex(ValueError, 'board'):
+                build.set_board_ports(source)
 
 
 if __name__ == '__main__':

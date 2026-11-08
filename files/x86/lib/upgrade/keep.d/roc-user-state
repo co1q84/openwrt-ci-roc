@@ -1,9 +1,0 @@
-/etc/config/lucky.daji/
-/etc/tailscale/
-/etc/nikki/mixin.yaml
-/etc/nikki/profiles/
-/etc/nikki/subscriptions/
-/etc/nikki/run/providers/rule/
-/etc/nikki/run/providers/proxy/
-/etc/openclash/config/
-/etc/openclash/custom/
