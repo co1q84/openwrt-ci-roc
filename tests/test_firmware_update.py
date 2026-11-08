@@ -64,6 +64,29 @@ class UpdateTests(unittest.TestCase):
             path.write_text(json.dumps(metadata))
             self.assertNotEqual(self.call('validate_metadata "$1"', path).returncode, 0)
 
+    def test_restored_config_archive_never_changes_system_directory_permissions(self):
+        # Real failure: `tar -C dir .` under umask 077 stored "./" and "./etc/" as 0700;
+        # restoring made / and /etc root-only, ubusd could not start, boot hung at "- ubus -".
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            setup = ('mkdir -p "$1/src/etc/config" "$1/src/etc/openclash/config" "$1/src/etc/tailscale" && '
+                     'echo net > "$1/src/etc/config/network" && echo p > "$1/src/etc/openclash/config/我的 配置.yaml" && '
+                     'echo s > "$1/src/etc/tailscale/tailscaled.state" && ln -s /usr/bin/mihomo "$1/src/etc/core" && ')
+            result = self.call(setup + 'pack_config "$1/src" "$1/out.tar.gz"', root)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            listing = subprocess.run(['tar', '-tvzf', root / 'out.tar.gz'], text=True, capture_output=True, check=True).stdout
+            self.assertFalse([l for l in listing.splitlines() if l.startswith('d')], listing)
+            names = sorted(subprocess.run(['tar', '-tzf', root / 'out.tar.gz'], text=True, capture_output=True,
+                                          check=True).stdout.splitlines())
+            self.assertEqual(names, ['etc/config/network', 'etc/core', 'etc/openclash/config/我的 配置.yaml',
+                                     'etc/tailscale/tailscaled.state'])
+            restored = root / 'restored'
+            restored.mkdir(mode=0o755)
+            subprocess.run(['tar', '-xzf', root / 'out.tar.gz', '-C', restored], check=True)
+            self.assertEqual(restored.stat().st_mode & 0o777, 0o755)
+            self.assertEqual((restored / 'etc/openclash/config/我的 配置.yaml').read_text(), 'p\n')
+            self.assertEqual(os.readlink(restored / 'etc/core'), '/usr/bin/mihomo')
+
     def test_old_cores_and_removed_nikki_excluded_but_private_configs_retained(self):
         entries = 'etc/openclash/core/clash_meta\netc/openclash/clash\netc/openclash/config/my profile.yaml\netc/openclash/custom/rules.list\netc/config/lucky.daji/cert.pem\netc/tailscale/tailscaled.state\netc/nikki/run/providers/rule/user.yaml\netc/nikki/profiles/p.yaml\netc/config/nikki\netc/uci-defaults/10_disable_services\netc/apk/repositories.d/distfeeds.list\n'
         result = self.call('filter_backup', input=entries)
@@ -362,6 +385,7 @@ class UpdateTests(unittest.TestCase):
             image.write_bytes(b'new image')
             work = Path(directory) / 'work'
             (work / 'migration/etc/config').mkdir(parents=True)
+            (work / 'migration/etc/config/network').write_text('cfg\n')
             expression = (self.ROLLBACK_STUBS + 'write_expectations() { :; }; '
                           'STORE="$1"; WORK="$2"; IMAGE="$3"; TAG=x86-64-3-1; keep_rollback')
             result = self.call(expression, store, work, image)

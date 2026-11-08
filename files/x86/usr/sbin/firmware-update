@@ -347,7 +347,7 @@ EOF
     done
 
     write_expectations "$WORK/migration" "$TAG" || return 1
-    tar -czf "$WORK/ssd-config.tar.gz" -C "$WORK/migration" . && gzip -t "$WORK/ssd-config.tar.gz"
+    pack_config "$WORK/migration" "$WORK/ssd-config.tar.gz" && gzip -t "$WORK/ssd-config.tar.gz"
 }
 
 write_target() {
@@ -442,6 +442,17 @@ filter_backup() {
     '
 }
 
+pack_config() {
+    # pack_config DIR ARCHIVE: files and links only, like `sysupgrade -b`. Directory
+    # entries would carry this script's umask 077 onto / and /etc of the restored
+    # system; non-root ubusd then cannot start and boot hangs at "procd: - ubus -".
+    (cd "$1" && find . ! -type d | sed 's|^\./||') > "$2.list" || return 1
+    [ -s "$2.list" ] || { fail '配置目录为空'; return 1; }
+    tar -czf "$2" -C "$1" -T "$2.list" || return 1
+    rm -f "$2.list"
+    ! tar -tvzf "$2" | grep -q '^d' || { fail '配置包含目录条目，拒绝使用'; return 1; }
+}
+
 make_backup() {
     sysupgrade -b "$WORK/full-backup.tar.gz" || { fail '配置备份失败'; return 1; }
     gzip -t "$WORK/full-backup.tar.gz" || return 1
@@ -460,7 +471,7 @@ make_backup() {
         fi
     done
     write_expectations "$WORK/migration" "$TAG" || { fail '无法生成配置核对清单'; return 1; }
-    tar -czf "$WORK/migration-backup.tar.gz" -C "$WORK/migration" . || return 1
+    pack_config "$WORK/migration" "$WORK/migration-backup.tar.gz" || return 1
     gzip -t "$WORK/migration-backup.tar.gz" || return 1
     verify_backup="$WORK/migration-backup.tar.gz"
     BACKUP_SHA=$(sha256sum "$verify_backup" | cut -d ' ' -f 1)
@@ -514,7 +525,7 @@ keep_rollback() {
     [ -z "$free" ] || [ "$free" -gt $((size * 3 / 1024)) ] || { fail '数据分区空间不足，无法建立回退点'; return 1; }
     mkdir -p "$STORE/$current" "$STORE/$TAG" || { fail '无法创建回退目录'; return 1; }
     write_expectations "$WORK/migration" "$current" &&
-        tar -czf "$WORK/rollback-config.tar.gz" -C "$WORK/migration" . &&
+        pack_config "$WORK/migration" "$WORK/rollback-config.tar.gz" &&
         write_expectations "$WORK/migration" "$TAG" &&
         store_file "$WORK/rollback-config.tar.gz" "$STORE/$current/config.tar.gz" ||
         { fail '无法保存回退配置'; return 1; }

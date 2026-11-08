@@ -16,6 +16,7 @@ import tarfile
 from datetime import datetime, timezone
 
 REPO = Path(__file__).resolve().parents[1]
+FILESYSTEMS = ('squashfs', 'ext4')
 
 
 def run(*args, cwd=None):
@@ -261,14 +262,16 @@ def release(source, output, repo, tag):
     required = required_config(repo)
     check_config(source / '.config', required)
     target = source / 'bin/targets/x86/64'
-    images = list(target.glob('*-generic-squashfs-combined-efi.img.gz'))
+    # The same build produces both root filesystems on the identical 64/960 MiB layout.
+    images = {fs: list(target.glob(f'*-generic-{fs}-combined-efi.img.gz')) for fs in FILESYSTEMS}
     manifests = list(target.glob('*-generic.manifest'))
-    if len(images) != 1 or len(manifests) != 1:
-        raise ValueError('Expected exactly one squashfs EFI image and package manifest')
-    partitions = image_partitions(images[0])
+    if any(len(found) != 1 for found in images.values()) or len(manifests) != 1:
+        raise ValueError('Expected exactly one squashfs and one ext4 EFI image and one package manifest')
+    images = {fs: found[0] for fs, found in images.items()}
+    partitions = {fs: image_partitions(path) for fs, path in images.items()}
     versions = check_manifest(manifests[0], required)
     output.mkdir(parents=True, exist_ok=False)
-    for path in [images[0], manifests[0], *target.glob('*.buildinfo'), *target.glob('profiles.json')]:
+    for path in [*images.values(), manifests[0], *target.glob('*.buildinfo'), *target.glob('profiles.json')]:
         shutil.copy2(path, output / path.name)
     shutil.copy2(source / '.config', output / 'x86-64.config')
     shutil.copy2(source / 'sources.lock.json', output / 'sources.lock.json')
@@ -280,12 +283,16 @@ def release(source, output, repo, tag):
         for parent, prefix in [(source / 'bin/packages', 'feeds'), (target / 'packages', 'target')]:
             for path in sorted(parent.rglob('*.apk')):
                 archive.add(path, arcname=str(Path(prefix) / path.relative_to(parent)))
-    image = asset_info(output / images[0].name)
-    image.update({'partitions': partitions, 'filesystem': 'squashfs', 'boot': 'efi'})
+    variants = {}
+    for fs, path in images.items():
+        variants[fs] = asset_info(output / path.name)
+        variants[fs].update({'partitions': partitions[fs], 'filesystem': fs, 'boot': 'efi'})
+    # `image` stays the squashfs build: firmware-update upgrades only that variant.
+    image = variants['squashfs']
     metadata = {'schema': 1, 'repository': 'co1q84/openwrt-ci-roc', 'tag': tag,
                 'built_at': datetime.now(timezone.utc).isoformat(), 'target': 'x86/64',
                 'device': 'J4125-4L', 'kernel': versions.get('kernel'),
-                'image': image, 'manifest': asset_info(output / manifests[0].name),
+                'image': image, 'images': variants, 'manifest': asset_info(output / manifests[0].name),
                 'packages': versions,
                 'builder_commit': subprocess.check_output(['git', '-C', str(repo), 'rev-parse', 'HEAD'], text=True).strip()}
     (output / 'release.json').write_text(json.dumps(metadata, indent=2) + '\n')

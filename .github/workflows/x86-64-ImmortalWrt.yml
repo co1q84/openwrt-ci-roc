@@ -114,7 +114,8 @@ jobs:
           from pathlib import Path
           m = json.loads(Path('release/release.json').read_text())
           Path('release-notes.md').write_text(
-              f"x86/64 · J4125-4L · UEFI · squashfs · boot 64 MiB / root 960 MiB\n\n"
+              f"x86/64 · J4125-4L · UEFI · squashfs and ext4 images · boot 64 MiB / root 960 MiB\n\n"
+              "firmware-update upgrades only the squashfs image; the ext4 image is for manual writing.\n\n"
               f"Kernel: {m['kernel']}\n\n"
               "This build resolves the latest configured source and plugin heads. Exact commits, final config, package manifest, offline APKs and SHA256 are attached.\n\n"
               "Keep device configuration private. Download firmware-update to the router and run it from SSH or the existing LuCI terminal. Check, back up and confirm manually; no unattended flashing.\n\n"

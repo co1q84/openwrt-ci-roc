@@ -1,6 +1,6 @@
 # OpenWrt · x86 / 太乙云编译
 
-x86 固件面向 J4125-4L：x86/64、UEFI、squashfs，启动分区 64 MiB、根分区 960 MiB。默认地址 `192.168.100.1`，新安装主机名 `OpenWrt`、Argon 主题。升级保留设备侧网络、SSH 端口、主机名和主题；公开固件不包含私人配置、密码、订阅、证书或登录身份。
+x86 固件面向 J4125-4L：x86/64、UEFI，同时产出 squashfs 与 ext4 两种镜像（分区布局相同），启动分区 64 MiB、根分区 960 MiB。默认地址 `192.168.100.1`，新安装主机名 `OpenWrt`、Argon 主题。升级保留设备侧网络、SSH 端口、主机名和主题；公开固件不包含私人配置、密码、订阅、证书或登录身份。
 
 每次手动或定时构建都会读取所选系统、feeds 和插件源的最新提交，然后只为**本次构建**固定提交号。不会长期锁定 Lucky 或其他插件版本。`sources.lock.json` 记录准确版本，便于核查和重现；`configs/x86-sources.json` 管理跟随哪些上游。
 
@@ -8,7 +8,7 @@ x86 固件面向 J4125-4L：x86/64、UEFI、squashfs，启动分区 64 MiB、根
 
 在 [x86 Actions](https://github.com/co1q84/openwrt-ci-roc/actions/workflows/x86-64-ImmortalWrt.yml) 点击 **Run workflow**。原聚合工作流继续在北京时间周六 04:00 定时构建两个目标，太乙自身的配置和脚本逻辑保持原状。
 
-x86 产物发布到独立的 `x86-64-运行编号-尝试次数` 标签，每次发布成功后只保留最新 4 个（其他发布线不动）。定时编译错峰：x86 每周六 04:00，太乙每周日 04:00；手动运行“Trigger-All”时两者依次执行。先以草稿上传所有文件，全部成功后才公开；更新入口只选择已完成发布。每次发布包含 EFI 镜像、最终 config、manifest、源码/feed 提交清单、构建信息、对应 APK 备份包、`release.json` 和 `sha256sums`。校验失败或关键包从 defconfig/manifest 消失时停止发布。
+x86 产物发布到独立的 `x86-64-运行编号-尝试次数` 标签，每次发布成功后只保留最新 4 个（其他发布线不动）。定时编译错峰：x86 每周六 04:00，太乙每周日 04:00；手动运行“Trigger-All”时两者依次执行。先以草稿上传所有文件，全部成功后才公开；更新入口只选择已完成发布。每次发布包含 squashfs 与 ext4 两个 EFI 镜像（`firmware-update` 只升级 squashfs 版，ext4 版手动写入）、最终 config、manifest、源码/feed 提交清单、构建信息、对应 APK 备份包、`release.json` 和 `sha256sums`。校验失败或关键包从 defconfig/manifest 消失时停止发布。
 
 ## 功能延续与上游变化
 
