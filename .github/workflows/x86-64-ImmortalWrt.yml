@@ -72,6 +72,11 @@ jobs:
 
       - name: Download sources
         run: |
+          # Archive hashes must use the same tar/xz as the later build. The
+          # runner's older xz emits different bytes for this pinned source.
+          make -C "$OPENWRT_PATH" tools/xz/compile -j"$(nproc)"
+          "$OPENWRT_PATH/staging_dir/host/bin/xz" --version
+          "$OPENWRT_PATH/staging_dir/host/bin/tar" --version
           # The aggregate download target can tolerate package failures. Check
           # this legacy source explicitly before spending hours compiling.
           make -C "$OPENWRT_PATH" package/feeds/helloworld/shadowsocks-libev/download -j1 V=s

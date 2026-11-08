@@ -19,7 +19,7 @@ x86 额外配置保留原有 LuCI 应用、存储/USB/igc 驱动、PPPoE、OpenC
 - Tailscale 的 OpenWrt 包关闭了不适用的自更新，统一通过固件更新；社区界面源包含旧 auto-update 设置的兼容修复。
 - 默认 feed 已移除的 Shadowsocks-libev/SSR 命令由仍提供对应包的 `fw876/helloworld` 源补齐，仅安装现有工具所需包并随该源更新。
 - 原系统的 `gecoosac` 已找到公开维护源及带 SHA256 的核心下载定义，随该源更新，保留此功能。不会从设备直接复制二进制上传 GitHub。
-- `shadowsocks-libev` 的已知旧源码归档哈希按源码提交和旧哈希精确修正，记录在 `sources.lock.json` 的 `source_fixes` 中；上游更新后不覆盖新定义。仍执行 SHA256 校验，并在整包编译前单独验证该包下载。
+- `shadowsocks-libev` 的已知旧源码归档哈希按源码提交和旧哈希精确修正，记录在 `sources.lock.json` 的 `source_fixes` 中；上游更新后不覆盖新定义。先准备 OpenWrt 自带的 tar/xz，统一下载与编译阶段的归档工具，再严格校验该包下载。
 - Lucky 等跨版本的业务配置兼容仍需要升级后验收；CI 成功与镜像检查通过不代表服务已在实机恢复。
 
 ## 路由器端更新入口
