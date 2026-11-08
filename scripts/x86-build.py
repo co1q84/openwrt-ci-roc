@@ -129,6 +129,29 @@ def stamp_build(source, lock, tag):
                                 'source_commit': lock['source']['commit']}, indent=2) + '\n')
 
 
+def apply_source_fixes(source):
+    path = source / 'feeds/helloworld/shadowsocks-libev/Makefile'
+    if not path.exists():
+        return []
+    text = path.read_text()
+    version = '9afa3cacf947f910be46b69fc5a7a1fdd02fd5e6'
+    before = 'b3898ad0a557bc8b0bbb2f3888101d461944239b0b7d4d4c6f164d73694a4595'
+    after = '9d2293f16629d1e30ede304ccddbaaa4e922c1c5e7ea04cef0e9d274aafa6109'
+    expected = {'PKG_NAME': 'shadowsocks-libev', 'PKG_VERSION': '3.3.5',
+                'PKG_SOURCE_PROTO': 'git',
+                'PKG_SOURCE_URL': 'https://github.com/shadowsocks/shadowsocks-libev.git',
+                'PKG_SOURCE_VERSION': version, 'PKG_MIRROR_HASH': before}
+    # Current download.mk creates a formal Git archive, including the pinned
+    # submodules. The feed's old archive hash does not describe those bytes.
+    # Apply only to this known source/hash pair; new upstream definitions win.
+    if not all(f'{key}:={value}\n' in text for key, value in expected.items()):
+        return []
+    path.write_text(text.replace(f'PKG_MIRROR_HASH:={before}\n',
+                                 f'PKG_MIRROR_HASH:={after}\n', 1))
+    return [{'package': 'helloworld/shadowsocks-libev', 'source_version': version,
+             'mirror_hash_before': before, 'mirror_hash_after': after}]
+
+
 def prepare(source, repo, tag=None):
     lock_path = repo / 'configs/x86-sources.json'
     # Resolve fresh heads on EVERY run, then freeze only this run's inputs.
@@ -142,6 +165,7 @@ def prepare(source, repo, tag=None):
         f'src-git {name} {e["url"]}^{e["commit"]}\n' for name, e in lock['feeds'].items()))
     for name, entry in lock['extras'].items():
         checkout(entry, source / 'package/roc' / name)
+    lock['source_fixes'] = apply_source_fixes(source)
     # Only the selected stable provider is needed. Registering the unused alpha
     # provider too creates mutually negative Kconfig dependencies upstream.
     alpha = source / 'package/roc/nikki/mihomo-alpha'

@@ -71,7 +71,11 @@ jobs:
           restore-keys: x86-64-downloads-
 
       - name: Download sources
-        run: make -C "$OPENWRT_PATH" download -j8
+        run: |
+          # The aggregate download target can tolerate package failures. Check
+          # this legacy source explicitly before spending hours compiling.
+          make -C "$OPENWRT_PATH" package/feeds/helloworld/shadowsocks-libev/download -j1 V=s
+          make -C "$OPENWRT_PATH" download -j8
 
       - name: Build firmware
         run: |
