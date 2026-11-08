@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 import gzip
 import hashlib
 import struct
+import sys
 import tarfile
 from datetime import datetime, timezone
 
@@ -292,14 +293,31 @@ def release(source, output, repo, tag):
     print(f'Verified release: {tag}, kernel {metadata["kernel"]}, {len(versions)} packages')
 
 
+def stale_releases(releases, current, keep=4):
+    """x86 release tags to delete, keeping `keep` in total: the current one and the newest published."""
+    ours = [r for r in releases if re.fullmatch(r'x86-64-[0-9]+-[0-9]+', r['tag_name'])
+            and r['tag_name'] != current]
+    published = sorted((r for r in ours if not r.get('draft')), key=lambda r: r['created_at'], reverse=True)
+    kept = {r['tag_name'] for r in published[:max(keep - 1, 0)]}
+    return [r['tag_name'] for r in ours if r['tag_name'] not in kept]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command', choices=['prepare', 'check-config', 'release'])
-    parser.add_argument('source', type=Path)
+    parser.add_argument('command', choices=['prepare', 'check-config', 'release', 'stale-releases'])
+    parser.add_argument('source', type=Path, nargs='?')
     parser.add_argument('--repo', type=Path, default=REPO)
     parser.add_argument('--output', type=Path)
     parser.add_argument('--tag')
+    parser.add_argument('--keep', type=int, default=4)
     args = parser.parse_args()
+    if args.command == 'stale-releases':
+        # Release list JSON on stdin; prints the tags to delete, one per line.
+        for tag in stale_releases(json.load(sys.stdin), args.tag, args.keep):
+            print(tag)
+        return
+    if args.source is None:
+        parser.error('source is required')
     if args.command == 'prepare':
         prepare(args.source.resolve(), args.repo.resolve(), args.tag)
     elif args.command == 'check-config':

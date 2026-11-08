@@ -1,6 +1,7 @@
 #!/bin/sh
 # Public standalone entry for J4125 firmware updates. No unattended flashing.
-# shellcheck disable=SC1091
+# shellcheck disable=SC1091,SC2015
+# SC2015: "A && B || { fail ...; return 1; }" is deliberate; the fallback always fails.
 set -eu
 umask 077
 
@@ -174,8 +175,12 @@ layout_compatible() {
 }
 
 read_device_layout() {
-    openwrt_call /lib device_map > "$WORK/device.partitions" || return 1
     jq -r '.image.partitions[] | @tsv' "$WORK/release.json" > "$WORK/expected.partitions"
+    check_layout
+}
+
+check_layout() {
+    openwrt_call /lib device_map > "$WORK/device.partitions" || return 1
     layout_compatible "$WORK/device.partitions" "$WORK/expected.partitions" || {
         fail '当前启动盘的系统分区与新镜像不同，需人工迁移，禁止自动写整盘'; return 1;
     }
@@ -341,6 +346,7 @@ EOF
         i=$((i + 1))
     done
 
+    write_expectations "$WORK/migration" "$TAG" || return 1
     tar -czf "$WORK/ssd-config.tar.gz" -C "$WORK/migration" . && gzip -t "$WORK/ssd-config.tar.gz"
 }
 
@@ -367,6 +373,15 @@ write_target() {
     }
     mkfs.ext4 -F -q -L data "$data" || { fail '数据分区格式化失败'; return 1; }
     uuid=$(blkid -s UUID -o value "$data") && [ -n "$uuid" ] || { fail '无法读取数据分区 UUID'; return 1; }
+    store=$WORK/target-data
+    mkdir -p "$store" && mount -t ext4 "$data" "$store" || { fail '无法挂载新数据分区'; return 1; }
+    # The installed image is the first rollback point once the next upgrade happens.
+    if mkdir -p "$store/firmware/$TAG" && store_file "$IMAGE" "$store/firmware/$TAG/image.img.gz" &&
+        printf '%s\n' "$(sha < "$IMAGE")" > "$store/firmware/$TAG/image.sha256"; then
+        umount "$store"
+    else
+        umount "$store"; fail '无法在数据分区保存固件镜像'; return 1
+    fi
     ssd_config "$uuid" || { fail '无法生成 SSD 配置'; return 1; }
     boot=$WORK/target-boot
     mkdir "$boot"
@@ -379,6 +394,37 @@ write_target() {
     fi
     printf '\n完成：%s 已写入 %s，数据分区 %s 将挂载到 %s，首次启动自动恢复当前配置。\n' "$TAG" "$target" "$data" "$DATA_MOUNT"
     printf '当前系统和 U 盘未改动。请在 BIOS 中把 SSD 设为第一启动项；U 盘保留作回退。\n'
+}
+
+sha() { if command -v sha256sum >/dev/null 2>&1; then sha256sum; else shasum -a 256; fi | cut -d ' ' -f 1; }
+
+# Settings whose restoration is checked after the upgrade (stored as hashes only).
+CHECK_KEYS='network.lan.ipaddr network.lan.device network.wan.proto network.wan.device
+network.wan.username network.wan.password network.wan.ipv6 network.wan6.disabled
+dropbear.@dropbear[0].Port system.@system[0].hostname system.@system[0].zonename
+luci.main.mediaurlbase dhcp.lan.ra dhcp.@dnsmasq[0].filter_aaaa firewall.@defaults[0].input
+openclash.config.enable openclash.config.config_path lucky.@lucky[0].enabled
+tailscale.settings.service_enabled tailscale.settings.advertise_routes
+dockerd.globals.data_root fstab.ssd_data.uuid watchcat.wan_redial.mode sqm.eth1.upload'
+
+write_expectations() {
+    # write_expectations DIR TAG: what the first boot of TAG must find restored.
+    conf=$1/etc/config
+    mkdir -p "$1/etc/firmware-update" || return 1
+    {
+        printf 'tag %s\n' "$2"
+        for key in $CHECK_KEYS; do
+            pkg=${key%%.*}
+            [ -f "$conf/$pkg" ] || continue
+            value=$(uci_get "$pkg" "${key#*.}") || continue
+            printf 'value %s %s\n' "$key" "$(printf '%s' "$value" | sha)"
+        done
+        for dir in etc/config/lucky.daji etc/tailscale etc/openclash/config; do
+            if [ -d "$1/$dir" ]; then
+                (cd "$1" && find "$dir" -type f -size +0) | sed 's#^#file /#'
+            fi
+        done
+    } > "$1/etc/firmware-update/expected"
 }
 
 filter_backup() {
@@ -413,12 +459,113 @@ make_backup() {
             cp -a "$directory/." "$WORK/migration$directory/" || return 1
         fi
     done
+    write_expectations "$WORK/migration" "$TAG" || { fail '无法生成配置核对清单'; return 1; }
     tar -czf "$WORK/migration-backup.tar.gz" -C "$WORK/migration" . || return 1
     gzip -t "$WORK/migration-backup.tar.gz" || return 1
     verify_backup="$WORK/migration-backup.tar.gz"
     BACKUP_SHA=$(sha256sum "$verify_backup" | cut -d ' ' -f 1)
     printf '\n请通过现有 SSH/SCP 保存到自己的电脑，勿上传 GitHub：\n%s/full-backup.tar.gz\n%s/migration-backup.tar.gz\n' "$WORK" "$WORK"
     printf '完整备份用于恢复旧系统；迁移备份排除了旧 OpenClash 核心与包代码。\n'
+}
+
+STORE=${STORE:-$DATA_MOUNT/firmware}
+BUILD_FILE=${BUILD_FILE:-/etc/firmware-build.json}
+
+interactive() { [ -t 0 ]; }
+data_mounted() { grep -q " $DATA_MOUNT " "${PROC_MOUNTS:-/proc/mounts}"; }
+current_tag() { jq -er '.tag' "$BUILD_FILE" 2>/dev/null; }
+# shellcheck disable=SC2153 # PART is assigned by export_partdevice (eval).
+boot_part() { export_bootdevice && export_partdevice PART 1 && printf '%s\n' "$PART"; }
+
+check_boot_space() {
+    # sysupgrade copies the configuration to the boot partition without checking
+    # the copy. Prove now that it is writable, has room and reads back intact.
+    part=$(openwrt_call /lib boot_part) && [ -n "$part" ] || { fail '无法确定启动分区'; return 1; }
+    mnt=$WORK/boot-check
+    mkdir -p "$mnt"
+    mount -o rw,noatime "/dev/$part" "$mnt" || { fail '启动分区无法以读写方式挂载'; return 1; }
+    need=$(( $(wc -c < "$1") * 2 / 1024 + 1024 ))
+    free=$(df -Pk "$mnt" | awk 'END {print $4}')
+    ok=1
+    if [ "$free" -gt "$need" ] && cp "$1" "$mnt/.firmware-update-check" && sync &&
+        cmp -s "$1" "$mnt/.firmware-update-check"; then
+        ok=0
+    fi
+    rm -f "$mnt/.firmware-update-check"
+    umount "$mnt"
+    [ "$ok" = 0 ] || { fail "启动分区不可写或空间不足（需要 ${need} KiB，剩余 ${free} KiB）"; return 1; }
+}
+
+store_file() {
+    # store_file SRC DEST: copy, then confirm the stored bytes.
+    cp "$1" "$2.part" && sync && cmp -s "$1" "$2.part" && mv "$2.part" "$2" || { rm -f "$2.part"; return 1; }
+}
+
+keep_rollback() {
+    # Keep what is needed to return to the firmware being left: its image (saved
+    # when it was installed) and its configuration at this moment. Only on upgrades.
+    if ! data_mounted; then
+        printf '未挂载 SSD 数据分区，本次升级不建立回退点。\n'
+        return 0
+    fi
+    current=$(current_tag) || { printf '当前固件不是本项目发布，本次升级不建立回退点。\n'; return 0; }
+    size=$(wc -c < "$IMAGE")
+    free=$(df -Pk "$DATA_MOUNT" 2>/dev/null | awk 'END {print $4}')
+    [ -z "$free" ] || [ "$free" -gt $((size * 3 / 1024)) ] || { fail '数据分区空间不足，无法建立回退点'; return 1; }
+    mkdir -p "$STORE/$current" "$STORE/$TAG" || { fail '无法创建回退目录'; return 1; }
+    write_expectations "$WORK/migration" "$current" &&
+        tar -czf "$WORK/rollback-config.tar.gz" -C "$WORK/migration" . &&
+        write_expectations "$WORK/migration" "$TAG" &&
+        store_file "$WORK/rollback-config.tar.gz" "$STORE/$current/config.tar.gz" ||
+        { fail '无法保存回退配置'; return 1; }
+    store_file "$IMAGE" "$STORE/$TAG/image.img.gz" &&
+        printf '%s\n' "$(sha < "$IMAGE")" > "$STORE/$TAG/image.sha256" || { fail '无法保存新固件镜像'; return 1; }
+    if [ ! -s "$STORE/$current/image.img.gz" ]; then
+        printf '警告：SSD 上没有 %s 的镜像，回退到它将不可用。\n' "$current"
+    fi
+    printf '%s\n' "$current" > "$STORE/previous"
+    for dir in "$STORE"/*/; do
+        name=$(basename "$dir")
+        [ "$name" = "$current" ] || [ "$name" = "$TAG" ] || rm -rf "$dir"
+    done
+    printf '已在 SSD 保留回退点：%s（firmware-update rollback）\n' "$current"
+}
+
+confirm_rollback() {
+    printf '将回退到 %s，并恢复离开它时的配置；之后的配置改动会丢失。\n输入 ROLLBACK %s 确认：' "$1" "$1"
+    IFS= read -r reply || return 1
+    [ "$reply" = "ROLLBACK $1" ] || { fail '未确认回退'; return 1; }
+}
+
+image_partitions() {
+    image_header "$1" "$WORK/image.header"
+    openwrt_call /lib partition_map "$WORK/image.header" > "$WORK/expected.partitions"
+}
+
+rollback() {
+    data_mounted || { fail '未挂载 SSD 数据分区'; return 1; }
+    target=$(cat "$STORE/previous" 2>/dev/null) && [ -n "$target" ] || { fail '没有可回退的版本'; return 1; }
+    dir=$STORE/$target
+    for file in image.img.gz image.sha256 config.tar.gz; do
+        [ -s "$dir/$file" ] || { fail "回退点不完整：$dir/$file"; return 1; }
+    done
+    verify_asset "$dir/image.img.gz" "$(cut -d ' ' -f 1 < "$dir/image.sha256")" || return 1
+    gzip -t "$dir/config.tar.gz" || { fail '回退配置已损坏'; return 1; }
+    image_partitions "$dir/image.img.gz" || return 1
+    check_layout || return 1
+    sysupgrade -T "$dir/image.img.gz" || { fail 'sysupgrade 镜像检查未通过'; return 1; }
+    confirm_rollback "$target" || return 1
+    # Keep the firmware being left reachable again ("roll forward").
+    current=$(current_tag) || current=
+    if [ -n "$current" ]; then
+        TAG=$current
+        make_backup || return 1
+        mkdir -p "$STORE/$current" && store_file "$WORK/migration-backup.tar.gz" "$STORE/$current/config.tar.gz" &&
+            printf '%s\n' "$current" > "$STORE/previous" || { fail '无法保存当前配置'; return 1; }
+    fi
+    check_device
+    check_boot_space "$dir/config.tar.gz"
+    sysupgrade -f "$dir/config.tar.gz" "$dir/image.img.gz"
 }
 
 confirm_upgrade() {
@@ -433,14 +580,18 @@ confirm_upgrade() {
 main() {
     mode=${1:-check}
     case "$mode" in
-        check|prepare|upgrade) ;;
+        check|prepare|upgrade|rollback) ;;
+        verify)
+            /usr/libexec/config-check -f; status=$?
+            cat /etc/firmware-update/last-check 2>/dev/null || printf '没有待核对的升级配置。\n'
+            exit "$status" ;;
         migrate) [ -n "${2:-}" ] || { fail '用法：firmware-update migrate /dev/目标盘'; exit 1; } ;;
-        *) fail '用法：firmware-update [check|prepare|upgrade|migrate /dev/目标盘]'; exit 1;;
+        *) fail '用法：firmware-update [check|prepare|upgrade|verify|rollback|migrate /dev/目标盘]'; exit 1;;
     esac
     [ "$(id -u)" = 0 ] || { fail '需要 root'; exit 1; }
-    if [ "$mode" = upgrade ] || [ "$mode" = migrate ]; then
-        [ -t 0 ] || { fail '升级和迁移必须在交互终端手动确认'; exit 1; }
-    fi
+    case "$mode" in upgrade|migrate|rollback)
+        interactive || { fail '升级、迁移和回退必须在交互终端手动确认'; exit 1; } ;;
+    esac
     for tool in curl jq sha256sum gzip tar apk sysupgrade cmp hexdump netstat; do
         command -v "$tool" >/dev/null || { fail "缺少命令：$tool"; exit 1; }
     done
@@ -450,6 +601,13 @@ main() {
     if [ "$mode" = migrate ]; then
         migrate "$2"
         return
+    fi
+    if [ "$mode" = rollback ]; then
+        rollback
+        return
+    fi
+    if [ -r /etc/firmware-update/last-check ]; then
+        printf '上次升级后配置核对：%s\n' "$(head -n 1 /etc/firmware-update/last-check)"
     fi
     get_release
     [ "${UP_TO_DATE:-0}" != 1 ] || return 0
@@ -465,6 +623,8 @@ main() {
     verify_asset "$IMAGE" "$(jq -r .image.sha256 "$WORK/release.json")"
     verify_asset "$WORK/migration-backup.tar.gz" "$BACKUP_SHA"
     sysupgrade -T "$IMAGE"
+    check_boot_space "$WORK/migration-backup.tar.gz"
+    keep_rollback
     sysupgrade -f "$WORK/migration-backup.tar.gz" "$IMAGE"
 }
 

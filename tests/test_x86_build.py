@@ -179,5 +179,18 @@ class ConfigurationTests(unittest.TestCase):
                 build.set_board_ports(source)
 
 
+    def test_only_the_newest_four_x86_releases_are_kept(self):
+        build = load_build()
+        def rel(tag, day, draft=False):
+            return {'tag_name': tag, 'created_at': f'2026-11-{day:02d}T00:00:00Z', 'draft': draft}
+        releases = [rel(f'x86-64-{n}-1', n) for n in range(1, 8)] + [
+            rel('x86-64', 1), rel('Taiyi-Stable', 1),             # other release lines are never touched
+            rel('x86-64-9-1', 9, draft=True),                     # leftover draft of a failed publish
+            rel('x86-64-10-1', 10, draft=True)]                   # the release being published now
+        stale = build.stale_releases(releases, current='x86-64-10-1', keep=4)
+        # Four in total: the new release plus the three newest published before it.
+        self.assertEqual(sorted(stale), ['x86-64-1-1', 'x86-64-2-1', 'x86-64-3-1', 'x86-64-4-1', 'x86-64-9-1'])
+
+
 if __name__ == '__main__':
     unittest.main()

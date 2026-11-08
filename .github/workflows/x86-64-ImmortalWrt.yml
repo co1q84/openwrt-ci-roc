@@ -122,3 +122,15 @@ jobs:
           PY
           gh release create "$RELEASE_TAG" release/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "$RELEASE_TAG" --notes-file release-notes.md --draft
           gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest=false
+
+      - name: Keep only the newest four x86 releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Only x86-64-RUN-ATTEMPT releases are considered; other release lines are untouched.
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" | jq -s 'add' \
+            | python3 scripts/x86-build.py stale-releases --tag "$RELEASE_TAG" --keep 4 \
+            | while read -r tag; do
+                echo "Removing superseded release $tag"
+                gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
+              done

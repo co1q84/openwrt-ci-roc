@@ -1,0 +1,58 @@
+#!/bin/sh
+# After an upgrade or migration, confirm the restored configuration is the one
+# that was backed up: hashed key settings and required identity/subscription
+# files. Mismatches are logged at err level (kept by error-log) and reported in
+# /etc/firmware-update/last-check without revealing any value.
+set -u
+
+ROOT=${ROOT:-}
+EXPECTED=${EXPECTED:-/etc/firmware-update/expected}
+STATE_DIR=${STATE_DIR:-/etc/firmware-update}
+force=${1:-}
+
+[ -r "$EXPECTED" ] || exit 0
+tag=$(sed -n 's/^tag //p' "$EXPECTED")
+build=$(sed -n 's/.*"tag"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${BUILD_FILE:-$ROOT/etc/firmware-build.json}" 2>/dev/null)
+# Expectations written for a different firmware are not about this one.
+[ -n "$tag" ] && [ "$tag" = "$build" ] || exit 0
+mkdir -p "$STATE_DIR" || exit 1
+if [ "$force" != -f ] && [ "$(cat "$STATE_DIR/checked" 2>/dev/null)" = "$tag" ]; then
+    exit 0
+fi
+
+hash() {
+    if command -v sha256sum >/dev/null 2>&1; then sha256sum; else shasum -a 256; fi | cut -d ' ' -f 1
+}
+
+total=0
+missing=$(mktemp) || exit 1
+while IFS= read -r line; do
+    kind=${line%% *}
+    rest=${line#* }
+    case "$kind" in
+        value)
+            key=${rest%% *}
+            want=${rest#* }
+            total=$((total + 1))
+            value=$(uci -q get "$key") && [ "$(printf '%s' "$value" | hash)" = "$want" ] ||
+                printf '%s\n' "$key" >> "$missing"
+            ;;
+        file)
+            total=$((total + 1))
+            [ -s "$ROOT$rest" ] || printf '%s\n' "$rest" >> "$missing"
+            ;;
+    esac
+done < "$EXPECTED"
+
+printf '%s\n' "$tag" > "$STATE_DIR/checked"
+now=$(date '+%F %T')
+if [ -s "$missing" ]; then
+    count=$(wc -l < "$missing" | tr -d ' ')
+    { printf 'FAIL %s %s: %s of %s items not restored\n' "$tag" "$now" "$count" "$total"; cat "$missing"; } > "$STATE_DIR/last-check"
+    logger -p daemon.err -t config-check "$count of $total items not restored after $tag: $(tr '\n' ' ' < "$missing")"
+    rm -f "$missing"
+    exit 1
+fi
+printf 'OK %s %s: %s items restored\n' "$tag" "$now" "$total" > "$STATE_DIR/last-check"
+logger -p daemon.notice -t config-check "all $total items restored after $tag"
+rm -f "$missing"

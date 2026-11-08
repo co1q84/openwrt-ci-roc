@@ -1,3 +1,4 @@
+import hashlib
 import os
 import json
 from pathlib import Path
@@ -102,7 +103,8 @@ class UpdateTests(unittest.TestCase):
             self.assertEqual(result.stdout, '1\t512\t131072\n2\t131584\t1966080\n4\t3000000\t10000\n')
 
     def test_preflight_failures_do_not_reach_flashing_command(self):
-        for stage in ['prepare_image', 'make_backup', 'confirm_upgrade', 'read_device_layout', 'image-test']:
+        for stage in ['prepare_image', 'make_backup', 'confirm_upgrade', 'read_device_layout', 'image-test',
+                      'check_boot_space', 'keep_rollback']:
             with self.subTest(stage=stage), tempfile.TemporaryDirectory() as directory:
                 sentinel = Path(directory) / 'flashed'
                 expression = '''
@@ -113,6 +115,8 @@ class UpdateTests(unittest.TestCase):
                 prepare_image() { IMAGE=$WORK/image; :; }
                 make_backup() { BACKUP_SHA=a; :; }
                 confirm_upgrade() { :; }
+                check_boot_space() { :; }
+                keep_rollback() { :; }
                 read_device_layout() { :; }
                 verify_asset() { :; }
                 sysupgrade() { if [ "$1" = -T ]; then :; else touch "$FLASHED"; fi; }
@@ -293,6 +297,81 @@ class UpdateTests(unittest.TestCase):
             self.assertEqual(ok.stdout.strip(), 'https://api.github.com/repos/o/r/releases/assets/7')
             missing = self.call('WORK="$1"; TAG=x86-64-1-1; asset_url image.gz', directory)
             self.assertNotEqual(missing.returncode, 0)
+
+    ROLLBACK_STUBS = """
+    id() { printf 0; }
+    interactive() { :; }
+    apk() { :; }; uci() { :; }
+    check_device() { :; }; check_layout() { :; }; check_boot_space() { :; }
+    data_mounted() { :; }
+    current_tag() { echo x86-64-2-1; }
+    image_partitions() { :; }
+    make_backup() { mkdir -p "$WORK/migration"; echo cfg > "$WORK/migration-backup.tar.gz"; }
+    sysupgrade() { if [ "$1" = -T ]; then :; else echo "$*" > "$FLASHED"; fi; }
+    mktemp() { command mktemp -d "$TEST_TMP/fw.XXXXXX"; }
+    """
+
+    def rollback_store(self, directory, sha_ok=True):
+        store = Path(directory) / 'store'
+        prev = store / 'x86-64-1-1'
+        prev.mkdir(parents=True)
+        (prev / 'image.img.gz').write_bytes(b'old image')
+        digest = hashlib.sha256(b'old image').hexdigest() if sha_ok else 'f' * 64
+        (prev / 'image.sha256').write_text(digest + '\n')
+        (prev / 'config.tar.gz').write_bytes(b'cfg')
+        (store / 'previous').write_text('x86-64-1-1\n')
+        return store
+
+    def run_rollback(self, directory, store, answer):
+        flashed = Path(directory) / 'flashed'
+        expression = (self.ROLLBACK_STUBS + 'gzip() { :; }; STORE="$3"; FLASHED=$1; TEST_TMP=$2; '
+                      'printf "%s\\n" "$4" > "$TEST_TMP/answer"; main rollback < "$TEST_TMP/answer"')
+        result = self.call(expression, flashed, directory, store, answer, tty=False)
+        return result, flashed
+
+    def test_rollback_flashes_previous_image_with_its_saved_configuration(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = self.rollback_store(directory)
+            result, flashed = self.run_rollback(directory, store, 'ROLLBACK x86-64-1-1')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            args = flashed.read_text()
+            self.assertIn(str(store / 'x86-64-1-1/config.tar.gz'), args)
+            self.assertIn(str(store / 'x86-64-1-1/image.img.gz'), args)
+            # The firmware being left becomes the next rollback target.
+            self.assertEqual((store / 'previous').read_text().strip(), 'x86-64-2-1')
+            self.assertTrue((store / 'x86-64-2-1/config.tar.gz').exists())
+
+    def test_rollback_refuses_tampered_image_wrong_answer_or_no_target(self):
+        cases = [('tampered', False, 'ROLLBACK x86-64-1-1'), ('answer', True, 'yes'), ('none', True, 'ROLLBACK x86-64-1-1')]
+        for name, sha_ok, answer in cases:
+            with self.subTest(name), tempfile.TemporaryDirectory() as directory:
+                store = self.rollback_store(directory, sha_ok)
+                if name == 'none':
+                    (store / 'previous').unlink()
+                result, flashed = self.run_rollback(directory, store, answer)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(flashed.exists())
+
+    def test_upgrade_keeps_a_rollback_point_and_prunes_older_ones(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = Path(directory) / 'store'
+            (store / 'x86-64-0-1').mkdir(parents=True)          # older than the previous: pruned
+            (store / 'x86-64-2-1').mkdir()
+            (store / 'x86-64-2-1/image.img.gz').write_bytes(b'current')
+            image = Path(directory) / 'new.img.gz'
+            image.write_bytes(b'new image')
+            work = Path(directory) / 'work'
+            (work / 'migration/etc/config').mkdir(parents=True)
+            expression = (self.ROLLBACK_STUBS + 'write_expectations() { :; }; '
+                          'STORE="$1"; WORK="$2"; IMAGE="$3"; TAG=x86-64-3-1; keep_rollback')
+            result = self.call(expression, store, work, image)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual((store / 'previous').read_text().strip(), 'x86-64-2-1')
+            self.assertTrue((store / 'x86-64-2-1/config.tar.gz').exists())
+            self.assertEqual((store / 'x86-64-3-1/image.img.gz').read_bytes(), b'new image')
+            self.assertEqual((store / 'x86-64-3-1/image.sha256').read_text().split()[0],
+                             hashlib.sha256(b'new image').hexdigest())
+            self.assertFalse((store / 'x86-64-0-1').exists())
 
 if __name__ == '__main__':
     unittest.main()

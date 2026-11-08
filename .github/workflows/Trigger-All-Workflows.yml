@@ -3,13 +3,19 @@ name: Trigger-All-Workflows
 on:
   workflow_dispatch:
   schedule:
+    # Staggered by a day: x86 on Saturday 04:00, Taiyi on Sunday 04:00 (Asia/Shanghai).
     - cron: 0 20 * * 5
+    - cron: 0 20 * * 6
 
 jobs:
   Taiyi-ImmortalWrt:
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 20 * * 6'
     uses: ./.github/workflows/Taiyi-ImmortalWrt.yml
 
   x86-64-ImmortalWrt:
+    # A manual run builds both, one after the other.
+    needs: Taiyi-ImmortalWrt
+    if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || github.event.schedule == '0 20 * * 5') }}
     permissions:
       contents: write
     uses: ./.github/workflows/x86-64-ImmortalWrt.yml

@@ -1,0 +1,11 @@
+#!/bin/sh /etc/rc.common
+# Verify once per firmware that the restored configuration took effect.
+START=99
+
+boot() {
+	/usr/libexec/config-check || :
+}
+
+start() {
+	/usr/libexec/config-check -f
+}

@@ -8,7 +8,7 @@ x86 固件面向 J4125-4L：x86/64、UEFI、squashfs，启动分区 64 MiB、根
 
 在 [x86 Actions](https://github.com/co1q84/openwrt-ci-roc/actions/workflows/x86-64-ImmortalWrt.yml) 点击 **Run workflow**。原聚合工作流继续在北京时间周六 04:00 定时构建两个目标，太乙自身的配置和脚本逻辑保持原状。
 
-x86 产物发布到独立的 `x86-64-运行编号-尝试次数` 标签。先以草稿上传所有文件，全部成功后才公开；更新入口只选择已完成发布。每次发布包含 EFI 镜像、最终 config、manifest、源码/feed 提交清单、构建信息、对应 APK 备份包、`release.json` 和 `sha256sums`。校验失败或关键包从 defconfig/manifest 消失时停止发布。
+x86 产物发布到独立的 `x86-64-运行编号-尝试次数` 标签，每次发布成功后只保留最新 4 个（其他发布线不动）。定时编译错峰：x86 每周六 04:00，太乙每周日 04:00；手动运行“Trigger-All”时两者依次执行。先以草稿上传所有文件，全部成功后才公开；更新入口只选择已完成发布。每次发布包含 EFI 镜像、最终 config、manifest、源码/feed 提交清单、构建信息、对应 APK 备份包、`release.json` 和 `sha256sums`。校验失败或关键包从 defconfig/manifest 消失时停止发布。
 
 ## 功能延续与上游变化
 
@@ -28,8 +28,14 @@ x86 以本机实际使用为准：保留 Tailscale、OpenClash（内核来自 mi
 firmware-update check    # 检查新版、内核和包差异
 firmware-update prepare  # 下载、校验、分区比较、sysupgrade -T，并准备私有备份
 firmware-update upgrade  # 同样检查后，等待用户留存备份和明确确认才升级
+firmware-update verify   # 重新核对升级后配置是否全部生效
+firmware-update rollback # 回到上一个版本及离开它时的配置（需 SSD 数据分区）
 firmware-update migrate /dev/sda  # 从当前系统把新固件装到另一块 SSD（一次性）
 ```
+
+升级前额外检查启动分区可写、空间足够且读回一致（系统 sysupgrade 复制配置时不检查结果）。备份内附关键设置的哈希与必需文件清单（不含明文）；新固件首次启动由 `config-check` 逐项核对，结果写入 `/etc/firmware-update/last-check`，不一致按 err 级别记录（进入 SSD 异常日志），`check` 时会显示上次结果。
+
+有 SSD 数据分区时，每次升级在 `/mnt/data/firmware/` 保留新镜像（含 SHA256）和离开当前版本那一刻的配置，只保留当前与上一个版本；`rollback` 校验镜像、分区和确认 `ROLLBACK 版本号` 后执行，并把被离开的版本记为下一次可回到的版本。
 
 旧固件首次使用：从 [Releases](https://github.com/co1q84/openwrt-ci-roc/releases) 中最新 `x86-64-*` 发布下载 `firmware-update`，通过现有 SSH/SCP 放到路由器 `/tmp/firmware-update`，运行 `sh /tmp/firmware-update check`。这是可直接运行的同一个入口，无需先安装额外 LuCI 插件。`upgrade` 必须在交互终端运行，不提供跳过确认的参数。
 
