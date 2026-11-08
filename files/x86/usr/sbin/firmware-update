@@ -5,7 +5,6 @@ set -eu
 umask 077
 
 REPOSITORY=co1q84/openwrt-ci-roc
-DOWNLOAD_BASE=https://github.com/$REPOSITORY/releases/download
 # SSD data partition: starts at 4 GiB, leaving room should the system area ever grow.
 DATA_START=8388608
 DATA_MOUNT=/mnt/data
@@ -16,10 +15,43 @@ is_current_build() {
     [ -r "$1" ] && jq -e --arg tag "$2" '.schema == 1 and .tag == $tag' "$1" >/dev/null 2>&1
 }
 
+proxy_listening() { netstat -lnt 2>/dev/null | grep -q ":$1 "; }
+
+fetch() {
+    # fetch URL OUT [proxy-port]; a proxy password reaches curl only via stdin.
+    set -- "$1" "$2" "${3:-}"
+    case "$1" in */releases/assets/*) accept='Accept: application/octet-stream';; *) accept='Accept: application/json';; esac
+    if [ -n "$3" ]; then
+        if [ "$(uci -q get 'openclash.@authentication[0].enabled')" = 1 ]; then
+            credentials=$(printf '%s:%s' "$(uci -q get 'openclash.@authentication[0].username')" \
+                "$(uci -q get 'openclash.@authentication[0].password')" | sed 's/[\\"]/\\&/g')
+            printf 'proxy-user = "%s"\n' "$credentials"
+        fi | curl -K - -x "http://127.0.0.1:$3" --fail --location --retry 3 --connect-timeout 20 \
+            --proto '=https' --tlsv1.2 --silent --show-error -C - -H "$accept" "$1" -o "$2"
+    else
+        curl --fail --location --retry 3 --connect-timeout 20 --proto '=https' --tlsv1.2 \
+            --silent --show-error -C - -H "$accept" "$1" -o "$2" < /dev/null
+    fi
+}
+
 download() {
-    curl --fail --location --retry 3 --connect-timeout 20 --proto '=https' --tlsv1.2 \
-        --silent --show-error "$1" -o "$2.part" || return 1
+    # GitHub is slow or unreliable from the router directly; prefer the local
+    # OpenClash mixed port when it is running. Integrity comes from SHA256.
+    port=$(uci -q get openclash.config.mixed_port || :)
+    if [ -n "$port" ] && proxy_listening "$port"; then
+        fetch "$1" "$2.part" "$port" && { mv "$2.part" "$2"; return 0; }
+        printf '经本机 OpenClash 下载失败，改为直连重试。\n' >&2
+    fi
+    fetch "$1" "$2.part" || return 1
     mv "$2.part" "$2"
+}
+
+asset_url() {
+    # API asset endpoint of the selected release (github.com/releases/download
+    # has been seen failing with 504 while the API kept working).
+    jq -er --arg tag "$TAG" --arg name "$1" \
+        '.[] | select(.tag_name == $tag) | .assets[] | select(.name == $name) | .url' "$WORK/releases.json" ||
+        { fail "发布中缺少文件：$1"; return 1; }
 }
 
 verify_asset() {
@@ -62,7 +94,7 @@ get_release() {
         select(.tag_name | test("^x86-64-[0-9]+-[0-9]+$"))][0].tag_name // empty' "$WORK/releases.json") || {
         fail '尚无经过校验的 x86 固件发布'; return 1;
     }
-    download "$DOWNLOAD_BASE/$TAG/release.json" "$WORK/release.json" || return 1
+    download "$(asset_url release.json)" "$WORK/release.json" || return 1
     validate_metadata "$WORK/release.json" || return 1
     [ "$(jq -r .tag "$WORK/release.json")" = "$TAG" ] || { fail '发布标签不一致'; return 1; }
     printf '可用固件：%s\n' "$TAG"
@@ -155,7 +187,7 @@ prepare_image() {
     size=$(jq -r .image.size "$WORK/release.json")
     free_kb=$(df -Pk /tmp | awk 'END {print $4}')
     [ "$free_kb" -gt "$((size * 2 / 1024 + 524288))" ] || { fail '/tmp 空间不足'; return 1; }
-    download "$DOWNLOAD_BASE/$TAG/$(basename "$IMAGE")" "$IMAGE" || return 1
+    download "$(asset_url "$(basename "$IMAGE")")" "$IMAGE" || return 1
     verify_asset "$IMAGE" "$(jq -r .image.sha256 "$WORK/release.json")" || return 1
     [ "$(wc -c < "$IMAGE")" -eq "$size" ] || { fail '镜像大小不匹配'; return 1; }
     gzip -t "$IMAGE" || return 1
@@ -409,7 +441,7 @@ main() {
     if [ "$mode" = upgrade ] || [ "$mode" = migrate ]; then
         [ -t 0 ] || { fail '升级和迁移必须在交互终端手动确认'; exit 1; }
     fi
-    for tool in curl jq sha256sum gzip tar apk sysupgrade cmp hexdump; do
+    for tool in curl jq sha256sum gzip tar apk sysupgrade cmp hexdump netstat; do
         command -v "$tool" >/dev/null || { fail "缺少命令：$tool"; exit 1; }
     done
     check_device

@@ -232,5 +232,67 @@ class UpdateTests(unittest.TestCase):
                 self.assertFalse(sentinel.exists())
 
 
+    def fake_curl(self, directory, proxy_ok=True):
+        # Records argv and the -K stdin config; the proxied attempt can fail.
+        root = Path(directory)
+        fake = root / 'bin'
+        fake.mkdir(exist_ok=True)
+        (fake / 'curl').write_text(
+            '#!/bin/sh\n'
+            'config=$(cat 2>/dev/null)\n'
+            'printf "ARGS %s\\nCONF %s\\n" "$*" "$config" >> "$LOG"\n'
+            'case "$*" in *127.0.0.1*) [ "$PROXY_OK" = 1 ] || exit 7;; esac\n'
+            'while [ $# -gt 0 ]; do [ "$1" = -o ] && printf payload > "$2"; shift; done\n')
+        (fake / 'curl').chmod(0o755)
+        (fake / 'uci').write_text(
+            '#!/bin/sh\n'
+            'case "$*" in\n'
+            '  *config.mixed_port*) echo 7893;;\n'
+            '  *authentication*enabled*) echo 1;;\n'
+            '  *authentication*username*) echo Clash;;\n'
+            '  *authentication*password*) echo s3cret-value;;\n'
+            '  *) exit 1;;\n'
+            'esac\n')
+        (fake / 'uci').chmod(0o755)
+        log = root / 'log'
+        env = (f'export PATH="{fake}:$PATH" LOG="{log}" PROXY_OK={1 if proxy_ok else 0}; '
+               'proxy_listening() { :; }; ')
+        return env, log
+
+    def test_downloads_prefer_local_openclash_without_exposing_its_password(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env, log = self.fake_curl(directory)
+            out = Path(directory) / 'file'
+            result = self.call(env + 'download "$1" "$2"', 'https://api.github.com/x', out)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(out.read_text(), 'payload')
+            text = log.read_text()
+            self.assertIn('127.0.0.1:7893', text)
+            args = '\n'.join(l for l in text.splitlines() if l.startswith('ARGS'))
+            self.assertNotIn('s3cret-value', args)            # never on the command line
+            self.assertIn('s3cret-value', text)                # passed via curl config on stdin
+            self.assertNotIn('s3cret-value', result.stdout + result.stderr)
+
+    def test_failed_proxy_falls_back_to_direct(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env, log = self.fake_curl(directory, proxy_ok=False)
+            out = Path(directory) / 'file'
+            result = self.call(env + 'download "$1" "$2"', 'https://api.github.com/x', out)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            attempts = [l for l in log.read_text().splitlines() if l.startswith('ARGS')]
+            self.assertEqual(len(attempts), 2)
+            self.assertIn('127.0.0.1', attempts[0])
+            self.assertNotIn('127.0.0.1', attempts[1])
+
+    def test_release_assets_use_the_api_endpoint(self):
+        with tempfile.TemporaryDirectory() as directory:
+            releases = Path(directory) / 'releases.json'
+            releases.write_text(json.dumps([{'tag_name': 'x86-64-1-1', 'assets': [
+                {'name': 'release.json', 'url': 'https://api.github.com/repos/o/r/releases/assets/7'}]}]))
+            ok = self.call('WORK="$1"; TAG=x86-64-1-1; asset_url release.json', directory)
+            self.assertEqual(ok.stdout.strip(), 'https://api.github.com/repos/o/r/releases/assets/7')
+            missing = self.call('WORK="$1"; TAG=x86-64-1-1; asset_url image.gz', directory)
+            self.assertNotEqual(missing.returncode, 0)
+
 if __name__ == '__main__':
     unittest.main()

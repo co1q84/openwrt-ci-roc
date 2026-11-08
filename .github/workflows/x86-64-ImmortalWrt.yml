@@ -37,7 +37,7 @@ jobs:
           sh -n files/x86/usr/sbin/firmware-update
 
       - name: Prepare runner storage
-        uses: sbwml/actions@free-disk
+        uses: sbwml/actions@5e97a5c2a054d853799442385ef2c8747fc28295 # free-disk, pinned: this job can publish releases
         with:
           build-mount-path: /mnt/openwrt
 
