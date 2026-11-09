@@ -65,14 +65,37 @@ verify_asset() {
     [ "$actual" = "$2" ] || { fail 'SHA256 不匹配'; return 1; }
 }
 
+# The router's jq has no regex support, so formats are checked with plain jq.
+# shellcheck disable=SC2016 # a jq program, not shell
+JQ_DEFS='
+def digits: length > 0 and (explode | all(. >= 48 and . <= 57));
+def is_tag: type == "string" and (split("-") as $p |
+    ($p | length) == 4 and $p[0] == "x86" and $p[1] == "64" and ($p[2] | digits) and ($p[3] | digits));
+def is_sha256: type == "string" and length == 64 and
+    (explode | all((. >= 48 and . <= 57) or (. >= 97 and . <= 102)));
+'
+
+installed_versions() {
+    # stdin: apk list --installed; stdout: {"name": "version-release", ...}
+    awk '{
+        s = $1; rel = ""
+        if (match(s, /-r[0-9]+$/)) { rel = substr(s, RSTART); s = substr(s, 1, RSTART - 1) }
+        n = split(s, part, "-")
+        if (n < 2 || part[n] !~ /^[0-9]/) next
+        name = part[1]
+        for (i = 2; i < n; i++) name = name "-" part[i]
+        print name "\t" part[n] rel
+    }' | jq -Rn '[inputs | split("\t") | {key: .[0], value: .[1]}] | from_entries'
+}
+
 validate_metadata() {
-    jq -e '
+    jq -e "$JQ_DEFS"'
       .schema == 1 and .repository == "co1q84/openwrt-ci-roc" and
-      (.tag | test("^x86-64-[0-9]+-[0-9]+$")) and
+      (.tag | is_tag) and
       .target == "x86/64" and .device == "J4125-4L" and
       .image.boot == "efi" and .image.filesystem == "squashfs" and
-      (.image.name | test("^immortalwrt-x86-64-generic-squashfs-combined-efi[.]img[.]gz$")) and
-      (.image.sha256 | test("^[0-9a-f]{64}$")) and
+      .image.name == "immortalwrt-x86-64-generic-squashfs-combined-efi.img.gz" and
+      (.image.sha256 | is_sha256) and
       (.image.size | type == "number" and . > 0) and
       (.image.partitions | length == 2) and
       .image.partitions[0][0] == 1 and .image.partitions[0][2] == 131072 and
@@ -91,8 +114,8 @@ check_device() {
 
 get_release() {
     download "https://api.github.com/repos/$REPOSITORY/releases?per_page=30" "$WORK/releases.json" || return 1
-    TAG=$(jq -er '[.[] | select(.draft == false and .prerelease == false) |
-        select(.tag_name | test("^x86-64-[0-9]+-[0-9]+$"))][0].tag_name // empty' "$WORK/releases.json") || {
+    TAG=$(jq -er "$JQ_DEFS"'[.[] | select(.draft == false and .prerelease == false) |
+        select(.tag_name | is_tag)][0].tag_name // empty' "$WORK/releases.json") || {
         fail '尚无经过校验的 x86 固件发布'; return 1;
     }
     download "$(asset_url release.json)" "$WORK/release.json" || return 1
@@ -109,9 +132,7 @@ get_release() {
         printf '已经安装当前最新发布，无需重复升级。\n'
         return 0
     fi
-    apk list --installed 2>/dev/null | jq -Rn '
-      [inputs | split(" ")[0] | try capture("^(?<name>.+)-(?<version>[0-9][^-]*(?:-r[0-9]+)?)$") |
-       {key:.name,value:.version}] | from_entries' > "$WORK/installed.json" || return 1
+    apk list --installed 2>/dev/null | installed_versions > "$WORK/installed.json" || return 1
     jq -r --slurpfile old "$WORK/installed.json" '
       .packages as $new |
       ($new | to_entries[] | select($old[0][.key] != .value) |

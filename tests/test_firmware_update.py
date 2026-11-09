@@ -37,6 +37,37 @@ class UpdateTests(unittest.TestCase):
             os.close(master)
             os.close(slave)
 
+    def test_updater_never_needs_jq_regex(self):
+        # Real failure: the router's jq is built without oniguruma ("jq was compiled
+        # without ONIGURUMA regex library"), so every regex made get_release fail.
+        import re
+        text = SCRIPT.read_text().split('filter_backup()')[0]
+        text = re.sub(r"awk '.*?'\n?", '', text, flags=re.S)  # awk has its own regex and works on BusyBox
+        self.assertEqual(re.findall(r'\b(?:test|match|capture|scan|splits|sub|gsub)\(', text), [])
+
+    def test_release_format_checks_without_regex(self):
+        cases = [('"x86-64-12-1"', 'is_tag', True), ('"x86-64-12"', 'is_tag', False), ('"x86-64-a-1"', 'is_tag', False),
+                 ('"x86-64-12-1-2"', 'is_tag', False), ('"x86-64--1"', 'is_tag', False), ('"x86-65-12-1"', 'is_tag', False),
+                 ('"' + 'a1' * 32 + '"', 'is_sha256', True), ('"' + 'A1' * 32 + '"', 'is_sha256', False),
+                 ('"' + 'a1' * 31 + '"', 'is_sha256', False), ('12', 'is_sha256', False)]
+        for value, name, expected in cases:
+            with self.subTest(value=value[:20], check=name):
+                result = self.call('jq -n "$JQ_DEFS"\' %s | %s\'' % (value, name))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout.strip(), 'true' if expected else 'false')
+
+    def test_installed_package_versions_are_split_without_jq_regex(self):
+        listing = ('luci-app-3cat-26.114.29056~eafcf1c noarch {feeds/x} () [installed]\n'
+                   'kmod-igc-6.18.60-r1 x86_64 {feeds/y} (GPL-2.0-only) [installed]\n'
+                   'base-files-1~b2616f2 x86_64 {feeds/base} (GPL-2.0) [installed]\n'
+                   'x86-64-tool-2026.03.25~cd7a4e5f-r1 x86_64 {z} () [installed]\n'
+                   'no-version-here x86_64 {z} () [installed]\n')
+        result = self.call('installed_versions', input=listing)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout),
+                         {'luci-app-3cat': '26.114.29056~eafcf1c', 'kmod-igc': '6.18.60-r1',
+                          'base-files': '1~b2616f2', 'x86-64-tool': '2026.03.25~cd7a4e5f-r1'})
+
     def test_tampered_image_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             image = Path(directory) / 'firmware'
