@@ -74,6 +74,8 @@ vnstat 默认统计 eth0（已设置的不覆盖）；存储位置每次开机�
 - 只挂载已配置的文件系统：首次启动关闭 ImmortalWrt 的匿名自动挂载（只做一次，之后在 LuCI 中的选择保留），避免另一块系统盘（U 盘回退盘或 SSD）被读写挂载，断电后其启动分区受损。
 - SSD 数据分区挂载前做文件系统检查（`enabled_fsck`）。若系统配置了数据分区却未挂载，`data-guard` 把 `/mnt/data` 设为只读占位：Docker 无法写入而不会塞满系统分区，vnstat 退回系统盘，异常日志与回退停用；这些功能只认 ext4 的 `/mnt/data`。
 - UDP 缓冲区上限 7 MiB，供 mihomo 的 QUIC 类协议（hysteria2、tuic）与 Tailscale 使用。
+- U 盘与 SSD 同一套最终设置：`upgrade` 与 `migrate` 写入的配置都包含仅路由器 IPv6（WAN 获取、LAN 不分配）和 watchcat 断网 10 分钟重拨，只写一次（`system.x86_defaults.router`），之后的手动修改保留。
+- Docker 默认不启动：首次启动时若没有任何容器则停用一次，需要时在 LuCI「系统 → 启动项」启用，选择会保留。
 
 ## 恢复与验收
 

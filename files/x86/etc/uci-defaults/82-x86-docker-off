@@ -1,0 +1,19 @@
+#!/bin/sh
+# Docker starts only when wanted: disabled once on a system without containers,
+# so an unused daemon adds no processes or firewall chains. Enable it again in
+# LuCI (System > Startup) when needed; that choice is kept.
+INIT=${DOCKERD_INIT:-/etc/init.d/dockerd}
+
+[ -x "$INIT" ] || exit 0
+[ "$(uci -q get system.x86_defaults.docker_off)" = 1 ] && exit 0
+root=$(uci -q get dockerd.globals.data_root)
+root=${root:-/opt/docker/}
+# The SSD data partition is not mounted yet at this point; leave such setups alone.
+case "$root" in /mnt/data/*) exit 0 ;; esac
+[ -n "$(ls -A "${root%/}/containers" 2>/dev/null)" ] && exit 0
+
+"$INIT" disable
+uci -q get system.x86_defaults >/dev/null || uci -q set system.x86_defaults=x86_defaults
+uci -q set system.x86_defaults.docker_off=1
+uci -q commit system
+exit 0
