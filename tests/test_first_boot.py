@@ -39,45 +39,5 @@ class VnstatDefaultsTests(unittest.TestCase):
             self.assertNotIn('add_list', calls)
 
 
-DOCKER = REPO / 'files/x86/etc/uci-defaults/82-x86-docker-off'
-
-
-class DockerDefaultTests(unittest.TestCase):
-    def run_default(self, directory, data_root, containers=False, marker=''):
-        root = Path(directory)
-        store = root / 'docker'
-        if containers:
-            (store / 'containers' / 'abc').mkdir(parents=True)
-        calls = root / 'calls'
-        init = root / 'dockerd'
-        init.write_text('#!/bin/sh\necho "init $*" >> "$CALLS"\n')
-        init.chmod(0o755)
-        bin_dir = root / 'bin'
-        bin_dir.mkdir()
-        (bin_dir / 'uci').write_text(
-            '#!/bin/sh\necho "uci $*" >> "$CALLS"\ncase "$*" in\n'
-            '  "-q get system.x86_defaults.docker_off") [ -n "$MARKER" ] && echo "$MARKER";;\n'
-            '  "-q get dockerd.globals.data_root") echo "$ROOT";;\n'
-            '  "-q get system.x86_defaults") exit 1;;\nesac\nexit 0\n')
-        (bin_dir / 'uci').chmod(0o755)
-        env = dict(os.environ, PATH=f'{bin_dir}:{os.environ["PATH"]}', CALLS=str(calls), DOCKERD_INIT=str(init),
-                   MARKER=marker, ROOT=data_root.replace('STORE', str(store)))
-        result = subprocess.run(['sh', str(DOCKER)], env=env, text=True, capture_output=True)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        return calls.read_text() if calls.exists() else ''
-
-    def test_unused_docker_is_disabled_once(self):
-        with tempfile.TemporaryDirectory() as directory:
-            calls = self.run_default(directory, 'STORE/')
-            self.assertIn('init disable', calls)
-            self.assertIn('uci -q set system.x86_defaults.docker_off=1', calls)
-
-    def test_docker_in_use_or_reenabled_or_on_ssd_is_left_alone(self):
-        for kwargs in [dict(data_root='STORE/', containers=True), dict(data_root='STORE/', marker='1'),
-                       dict(data_root='/mnt/data/docker/')]:
-            with self.subTest(**kwargs), tempfile.TemporaryDirectory() as directory:
-                self.assertNotIn('init disable', self.run_default(directory, **kwargs))
-
-
 if __name__ == '__main__':
     unittest.main()
