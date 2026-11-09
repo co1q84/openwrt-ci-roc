@@ -1,0 +1,56 @@
+#!/bin/sh
+# Router settings for a fresh install, identical to what firmware-update writes
+# on upgrade and migrate; applied once (marker system.x86_defaults.router) so
+# later changes made in LuCI stay:
+# - IPv6 for the router only: WAN obtains it, the LAN gets none (proxy stays IPv4);
+# - watchcat: check domestic hosts, redial the WAN after 10 minutes without internet.
+[ "$(uci -q get system.x86_defaults.router)" = 1 ] && exit 0
+
+HOSTS='223.5.5.5 119.29.29.29'
+WATCHCAT=${WATCHCAT_CONF:-/etc/config/watchcat}
+
+# Only when wan6 belongs to the wan firewall zone; otherwise IPv6 would be unfiltered.
+i=0
+ipv6=
+while zone=$(uci -q get "firewall.@zone[$i].name"); do
+	if [ "$zone" = wan ]; then
+		uci -q get "firewall.@zone[$i].network" | grep -qw wan6 && ipv6=1
+		break
+	fi
+	i=$((i + 1))
+done
+
+if [ -n "$ipv6" ]; then
+	uci -q set network.wan.ipv6=1
+	uci -q set network.wan6=interface
+	uci -q set network.wan6.proto=dhcpv6
+	uci -q set network.wan6.device=@wan
+	uci -q set network.wan6.reqaddress=try
+	uci -q set network.wan6.reqprefix=auto
+	uci -q set network.wan6.disabled=0
+	uci -q delete network.lan.ip6assign
+	uci -q set dhcp.lan.ra=disabled
+	uci -q set dhcp.lan.dhcpv6=disabled
+	uci -q set dhcp.lan.ndp=disabled
+	uci -q set 'dhcp.@dnsmasq[0].filter_aaaa=1'
+	uci -q commit network
+	uci -q commit dhcp
+fi
+
+[ -f "$WATCHCAT" ] || : > "$WATCHCAT"
+i=0
+while mode=$(uci -q get "watchcat.@watchcat[$i].mode"); do
+	[ "$mode" != ping_reboot ] || uci -q set "watchcat.@watchcat[$i].pinghosts=$HOSTS"
+	i=$((i + 1))
+done
+uci -q set watchcat.wan_redial=watchcat
+uci -q set watchcat.wan_redial.mode=run_script
+uci -q set watchcat.wan_redial.period=10m
+uci -q set "watchcat.wan_redial.pinghosts=$HOSTS"
+uci -q set watchcat.wan_redial.script=/usr/libexec/wan-redial
+uci -q commit watchcat
+
+uci -q get system.x86_defaults >/dev/null || uci -q set system.x86_defaults=x86_defaults
+uci -q set system.x86_defaults.router=1
+uci -q commit system
+exit 0
