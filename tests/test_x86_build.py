@@ -29,6 +29,23 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual(required.get('CONFIG_PACKAGE_luci-app-openclash'), 'y')
         self.assertNotEqual(required.get('CONFIG_PACKAGE_nikki', 'n'), 'y')
 
+    def test_openclash_starts_offline_with_bundled_core_and_geodata(self):
+        # A fresh install must not need a proxy to download the core or GeoIP data
+        # before it can configure the proxy.
+        build = load_build()
+        required = build.required_config(REPO)
+        self.assertEqual(required.get('CONFIG_PACKAGE_v2ray-geoip'), 'y')
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory)
+            generate = source / 'package/base-files/files/bin/config_generate'
+            generate.parent.mkdir(parents=True)
+            generate.write_text("hostname='ImmortalWrt'\nipaddr='192.168.1.1'\n")
+            build.install_overlay(source, REPO)
+            links = {name: os.readlink(source / 'files/etc/openclash' / name)
+                     for name in ('core/clash_meta', 'GeoIP.dat')}
+            self.assertEqual(links, {'core/clash_meta': '/usr/bin/mihomo',
+                                     'GeoIP.dat': '/usr/share/v2ray/geoip.dat'})
+
     def test_x86_removals_do_not_change_shared_taiyi_selections(self):
         build = load_build()
         shared = build.config_values(REPO / 'configs/General.config')

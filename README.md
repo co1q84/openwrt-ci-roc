@@ -12,7 +12,7 @@ x86 产物发布到独立的 `x86-64-运行编号-尝试次数` 标签，每次�
 
 ## 功能延续与上游变化
 
-x86 以本机实际使用为准：保留 Tailscale、OpenClash（内核来自 mihomo-meta）、Lucky、SQM、看门狗/定时重启、网络唤醒、存储/USB/igc 驱动、PPPoE 及基础 LuCI。已移除本机未使用或仅有示例配置的 Docker（默认不安装，可自行装）、frp、HAProxy、Samba/wsdd2/avahi、Nikki、OpenAppFilter、sing-box/xray、Shadowsocks/SSR 命令行、banIP、DDNS（由 Lucky 负责）、ACME、3cat、socat、wifischedule、arpbind、aria2/AriaNg（NAS 已提供）、WireGuard（由 Tailscale 组网）、USB 打印、hd-idle（SSD 系统盘不应休眠）、gecoosac、Aurora 主题、HomeProxy、iStore、dufs、FileBrowser 及旧 PassWall 遗留组件；不再生成 ISO/虚拟机镜像，不含 kexec。路由器自身 TCP 使用 BBR（`kmod-tcp-bbr`，作用于 OpenClash 代理连接，转发流量队列不变）。保留 UPnP 与 KMS（vlmcsd），新增 Vantage 主题及配套面板（默认主题仍为 Argon）、wechatpush 异常通知与 vnstat2 流量统计。共享的 `General.config` 不变，x86 仅在自身配置中关闭，太乙不受影响。依赖库由上游解析；不将运行配置放入编译仓库。
+x86 以本机实际使用为准：保留 Tailscale、OpenClash（内核来自 mihomo-meta，并内置 Country.mmdb、GeoSite.dat、GeoIP.dat，全新安装断网也能启动，无需先下载内核或规则数据）、Lucky、SQM、看门狗/定时重启、网络唤醒、存储/USB/igc 驱动、PPPoE 及基础 LuCI。已移除本机未使用或仅有示例配置的 Docker（默认不安装，可自行装）、frp、HAProxy、Samba/wsdd2/avahi、Nikki、OpenAppFilter、sing-box/xray、Shadowsocks/SSR 命令行、banIP、DDNS（由 Lucky 负责）、ACME、3cat、socat、wifischedule、arpbind、aria2/AriaNg（NAS 已提供）、WireGuard（由 Tailscale 组网）、USB 打印、hd-idle（SSD 系统盘不应休眠）、gecoosac、Aurora 主题、HomeProxy、iStore、dufs、FileBrowser 及旧 PassWall 遗留组件；不再生成 ISO/虚拟机镜像，不含 kexec。路由器自身 TCP 使用 BBR（`kmod-tcp-bbr`，作用于 OpenClash 代理连接，转发流量队列不变）。保留 UPnP 与 KMS（vlmcsd），新增 Vantage 主题及配套面板（默认主题仍为 Argon）、wechatpush 异常通知与 vnstat2 流量统计。共享的 `General.config` 不变，x86 仅在自身配置中关闭，太乙不受影响。依赖库由上游解析；不将运行配置放入编译仓库。
 
 - 新内核的 x86/64 显示继续使用 DRM/i915，旧 fbdev 包已限制为 legacy/geode；Netfilter 日志采用合并后的 `kmod-nf-log`，iptables 功能由现有 ipt/nft 兼容模块承接。输入与 USB 打印显式启用其支持包。
 - 当前上游 Argon 已整合原 `luci-app-argon-config`，使用主题内置配置入口，旧设置交由上游迁移。

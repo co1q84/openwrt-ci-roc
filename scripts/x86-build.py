@@ -129,11 +129,16 @@ def install_overlay(source, repo):
     overlay = repo / 'files/x86'
     if overlay.exists():
         shutil.copytree(overlay, source / 'files', dirs_exist_ok=True, symlinks=True)
-    core = source / 'files/etc/openclash/core/clash_meta'
-    core.parent.mkdir(parents=True, exist_ok=True)
-    if core.is_symlink() or core.exists():
-        core.unlink()
-    core.symlink_to('/usr/bin/mihomo')
+    # OpenClash must start on a fresh install without first downloading anything:
+    # its core comes from mihomo-meta and GeoIP.dat from v2ray-geoip (Country.mmdb
+    # and GeoSite.dat ship with OpenClash). Its own updates later replace them.
+    for name, target in (('core/clash_meta', '/usr/bin/mihomo'),
+                         ('GeoIP.dat', '/usr/share/v2ray/geoip.dat')):
+        link = source / 'files/etc/openclash' / name
+        link.parent.mkdir(parents=True, exist_ok=True)
+        if link.is_symlink() or link.exists():
+            link.unlink()
+        link.symlink_to(target)
 
 
 BOARD_PORTS = ('cnction-j4125-4l)\n'
