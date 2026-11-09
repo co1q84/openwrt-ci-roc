@@ -370,10 +370,6 @@ EOF
     # fsck at boot repairs the ext4 journal after a power loss before it is mounted.
     expect fstab ssd_data.uuid "$1" && expect fstab ssd_data.target "$DATA_MOUNT" &&
         expect fstab ssd_data.enabled 1 && expect fstab ssd_data.enabled_fsck 1 || return 1
-    if [ -f "$conf/dockerd" ]; then
-        echo "set PKG.globals.data_root=$DATA_MOUNT/docker/" | uci_edit dockerd || return 1
-        expect dockerd globals.data_root "$DATA_MOUNT/docker/" || return 1
-    fi
 
     write_expectations "$WORK/migration" "$TAG" || return 1
     pack_config "$WORK/migration" "$WORK/ssd-config.tar.gz" && gzip -t "$WORK/ssd-config.tar.gz"
@@ -434,7 +430,7 @@ dropbear.@dropbear[0].Port system.@system[0].hostname system.@system[0].zonename
 luci.main.mediaurlbase dhcp.lan.ra dhcp.@dnsmasq[0].filter_aaaa firewall.@defaults[0].input
 openclash.config.enable openclash.config.config_path lucky.@lucky[0].enabled
 tailscale.settings.service_enabled tailscale.settings.advertise_routes
-dockerd.globals.data_root fstab.ssd_data.uuid watchcat.wan_redial.mode sqm.eth1.upload'
+fstab.ssd_data.uuid watchcat.wan_redial.mode sqm.eth1.upload'
 
 write_expectations() {
     # write_expectations DIR TAG: what the first boot of TAG must find restored.

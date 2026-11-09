@@ -1,9 +1,10 @@
 #!/bin/sh
 # A system set up with the SSD data partition (fstab section ssd_data) whose
-# partition did not mount gets a tiny read-only tmpfs over /mnt/data. Docker,
-# vnstat, error-log and rollback then fail or fall back instead of silently
-# filling the system overlay. They only accept an ext4 /mnt/data as the data
-# partition, so the placeholder is never mistaken for it.
+# partition did not mount gets a tiny read-only tmpfs over /mnt/data. Anything
+# storing data there (vnstat, error-log, rollback, software added later) then
+# fails or falls back instead of silently filling the system overlay. They only
+# accept an ext4 /mnt/data as the data partition, so the placeholder is never
+# mistaken for it.
 set -u
 
 MOUNT=${MOUNT:-/mnt/data}

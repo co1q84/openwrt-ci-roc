@@ -12,7 +12,7 @@ x86 产物发布到独立的 `x86-64-运行编号-尝试次数` 标签，每次�
 
 ## 功能延续与上游变化
 
-x86 以本机实际使用为准：保留 Tailscale、OpenClash（内核来自 mihomo-meta）、Lucky、Docker、SQM、看门狗/定时重启、网络唤醒、存储/USB/igc 驱动、PPPoE 及基础 LuCI。已移除本机未使用或仅有示例配置的 frp、HAProxy、Samba/wsdd2/avahi、Nikki、OpenAppFilter、sing-box/xray、Shadowsocks/SSR 命令行、banIP、DDNS（由 Lucky 负责）、ACME、3cat、socat、wifischedule、arpbind、aria2/AriaNg（NAS 已提供）、WireGuard（由 Tailscale 组网）、USB 打印、hd-idle（SSD 系统盘不应休眠）、gecoosac、Aurora 主题、HomeProxy、iStore、dufs、FileBrowser 及旧 PassWall 遗留组件；不再生成 ISO/虚拟机镜像，不含 kexec。路由器自身 TCP 使用 BBR（`kmod-tcp-bbr`，作用于 OpenClash 代理连接，转发流量队列不变）。保留 UPnP 与 KMS（vlmcsd），新增 Vantage 主题及配套面板（默认主题仍为 Argon）、wechatpush 异常通知与 vnstat2 流量统计。共享的 `General.config` 不变，x86 仅在自身配置中关闭，太乙不受影响。依赖库由上游解析；不将运行配置放入编译仓库。
+x86 以本机实际使用为准：保留 Tailscale、OpenClash（内核来自 mihomo-meta）、Lucky、SQM、看门狗/定时重启、网络唤醒、存储/USB/igc 驱动、PPPoE 及基础 LuCI。已移除本机未使用或仅有示例配置的 Docker（默认不安装，可自行装）、frp、HAProxy、Samba/wsdd2/avahi、Nikki、OpenAppFilter、sing-box/xray、Shadowsocks/SSR 命令行、banIP、DDNS（由 Lucky 负责）、ACME、3cat、socat、wifischedule、arpbind、aria2/AriaNg（NAS 已提供）、WireGuard（由 Tailscale 组网）、USB 打印、hd-idle（SSD 系统盘不应休眠）、gecoosac、Aurora 主题、HomeProxy、iStore、dufs、FileBrowser 及旧 PassWall 遗留组件；不再生成 ISO/虚拟机镜像，不含 kexec。路由器自身 TCP 使用 BBR（`kmod-tcp-bbr`，作用于 OpenClash 代理连接，转发流量队列不变）。保留 UPnP 与 KMS（vlmcsd），新增 Vantage 主题及配套面板（默认主题仍为 Argon）、wechatpush 异常通知与 vnstat2 流量统计。共享的 `General.config` 不变，x86 仅在自身配置中关闭，太乙不受影响。依赖库由上游解析；不将运行配置放入编译仓库。
 
 - 新内核的 x86/64 显示继续使用 DRM/i915，旧 fbdev 包已限制为 legacy/geode；Netfilter 日志采用合并后的 `kmod-nf-log`，iptables 功能由现有 ipt/nft 兼容模块承接。输入与 USB 打印显式启用其支持包。
 - 当前上游 Argon 已整合原 `luci-app-argon-config`，使用主题内置配置入口，旧设置交由上游迁移。
@@ -46,7 +46,7 @@ scp -O -P 50222 root@192.168.100.1:/tmp/firmware-update.实际目录/full-backup
 scp -O -P 50222 root@192.168.100.1:/tmp/firmware-update.实际目录/migration-backup.tar.gz ./
 ```
 
-完整备份用于回到原固件时恢复配置。迁移备份保留配置和身份，并排除旧 OpenClash 可执行核心、已移除的 Nikki 数据和旧系统的软件源清单，避免覆盖新版构建产物。Docker 数据目录和任意外置存储内容不属于配置备份，须单独保留；当前空实例也不能推导未来无需备份。
+完整备份用于回到原固件时恢复配置。迁移备份保留配置和身份，并排除旧 OpenClash 可执行核心、已移除的 Nikki 数据和旧系统的软件源清单，避免覆盖新版构建产物。任意外置存储内容不属于配置备份，须单独保留。
 
 下载经 GitHub API 获取发布文件，优先走本机 OpenClash 混合端口（读取其认证配置，密码只经标准输入交给 curl），失败再直连；完整性以 SHA256 为准。更新入口核对设备、UEFI/squashfs、当前启动盘与镜像分区、SHA256 和 `sysupgrade -T`；任何失败都停止。不会猜测固定磁盘号，不执行强制刷机、分区调整或无人值守更新。真正升级前需输入备份留存确认及完整发布编号，随后由系统 sysupgrade 保留配置升级并重启。
 
@@ -58,7 +58,7 @@ scp -O -P 50222 root@192.168.100.1:/tmp/firmware-update.实际目录/migration-b
 2. 下载并校验发布镜像，做配置备份，要求输入 `ERASE /dev/目标盘`。
 3. 整盘写入镜像并读回比对 SHA256；把 GPT 备份头移到盘尾，从 4 GiB 处创建 ext4 数据分区（`data`），核对系统分区未变。
 4. 在迁移配置中写入最终状态，经 uci 逐项读回确认后放入新启动分区的 `sysupgrade.tgz`，首次启动自动恢复：
-   - 数据分区挂载到 `/mnt/data`，Docker 数据目录 `/mnt/data/docker/`；
+   - 数据分区挂载到 `/mnt/data`；
    - IPv6 仅路由器 WAN 获取（`wan.ipv6=1`、wan6 跟随 PPPoE），LAN 不分配、不通告、不解析 AAAA，代理流量保持 IPv4；
    - watchcat 检测 223.5.5.5 与 119.29.29.29：10 分钟不通执行 `wan-redial` 重拨，原重启规则周期不变。
 
@@ -72,7 +72,7 @@ vnstat 默认统计 eth0（已设置的不覆盖）；存储位置每次开机�
 
 - 硬件看门狗：`kmod-i2c-i801` 注册 J4125 的 iTCO 定时器，由 procd 喂狗；系统卡死时自动重启（若 BIOS 锁定 TCO，驱动仅报告不可用）。
 - 只挂载已配置的文件系统：首次启动关闭 ImmortalWrt 的匿名自动挂载（只做一次，之后在 LuCI 中的选择保留），避免另一块系统盘（U 盘回退盘或 SSD）被读写挂载，断电后其启动分区受损。
-- SSD 数据分区挂载前做文件系统检查（`enabled_fsck`）。若系统配置了数据分区却未挂载，`data-guard` 把 `/mnt/data` 设为只读占位：Docker 无法写入而不会塞满系统分区，vnstat 退回系统盘，异常日志与回退停用；这些功能只认 ext4 的 `/mnt/data`。
+- SSD 数据分区挂载前做文件系统检查（`enabled_fsck`）。若系统配置了数据分区却未挂载，`data-guard` 把 `/mnt/data` 设为只读占位：之后自装、往数据分区写数据的软件不会塞满系统分区，vnstat 退回系统盘，异常日志与回退停用；这些功能只认 ext4 的 `/mnt/data`。
 - UDP 缓冲区上限 7 MiB，供 mihomo 的 QUIC 类协议（hysteria2、tuic）与 Tailscale 使用。
 - U 盘与 SSD 同一套最终设置：`upgrade` 与 `migrate` 写入的配置都包含仅路由器 IPv6（WAN 获取、LAN 不分配）和 watchcat 断网 10 分钟重拨，只写一次（`system.x86_defaults.router`），之后的手动修改保留。
 
