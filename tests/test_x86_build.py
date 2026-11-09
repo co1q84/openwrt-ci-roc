@@ -61,7 +61,7 @@ class ConfigurationTests(unittest.TestCase):
         build = load_build()
         required = {'CONFIG_PACKAGE_kmod-igc': 'y',
                     'CONFIG_PACKAGE_luci-app-openclash': 'y',
-                    'CONFIG_TARGET_ROOTFS_PARTSIZE': '960',
+                    'CONFIG_TARGET_ROOTFS_PARTSIZE': '2048',
                     'CONFIG_TARGET_ROOTFS_SQUASHFS': 'y'}
         with tempfile.TemporaryDirectory() as directory:
             config = Path(directory) / '.config'
@@ -70,7 +70,7 @@ class ConfigurationTests(unittest.TestCase):
                 build.check_config(config, required)
             config.write_text('\n'.join(f'{k}={v}' for k, v in required.items()) + '\n')
             build.check_config(config, required)
-            config.write_text(config.read_text().replace('960', '1536'))
+            config.write_text(config.read_text().replace('2048', '960'))
             with self.assertRaisesRegex(ValueError, 'ROOTFS_PARTSIZE'):
                 build.check_config(config, required)
 

@@ -1,6 +1,6 @@
 # OpenWrt · x86 / 太乙云编译
 
-x86 固件面向 J4125-4L：x86/64、UEFI，同时产出 squashfs 与 ext4 两种镜像（分区布局相同），启动分区 64 MiB、根分区 960 MiB。默认地址 `192.168.100.1`，新安装主机名 `OpenWrt`、Argon 主题。升级保留设备侧网络、SSH 端口、主机名和主题；公开固件不包含私人配置、密码、订阅、证书或登录身份。
+x86 固件面向 J4125-4L：x86/64、UEFI，同时产出 squashfs 与 ext4 两种镜像（分区布局相同），启动分区 64 MiB、根分区 2048 MiB（squashfs 版插件可用约 1.8 GB）。同一镜像既可只用 U 盘启动，也可迁到 SSD 带数据分区使用。默认地址 `192.168.100.1`，新安装主机名 `OpenWrt`、Argon 主题。升级保留设备侧网络、SSH 端口、主机名和主题；公开固件不包含私人配置、密码、订阅、证书或登录身份。
 
 每次手动或定时构建都会读取所选系统、feeds 和插件源的最新提交，然后只为**本次构建**固定提交号。不会长期锁定 Lucky 或其他插件版本。`sources.lock.json` 记录准确版本，便于核查和重现；`configs/x86-sources.json` 管理跟随哪些上游。
 
@@ -62,9 +62,11 @@ scp -O -P 50222 root@192.168.100.1:/tmp/firmware-update.实际目录/migration-b
    - IPv6 仅路由器 WAN 获取（`wan.ipv6=1`、wan6 跟随 PPPoE），LAN 不分配、不通告、不解析 AAAA，代理流量保持 IPv4；
    - watchcat 检测 223.5.5.5 与 119.29.29.29：10 分钟不通执行 `wan-redial` 重拨，原重启规则周期不变。
 
-完成后在 BIOS 中把 SSD 设为第一启动项，U 盘保留作回退。之后在 SSD 上 `upgrade` 只重写启动与系统分区，数据分区保留；系统分区大小不可再改。
+完成后在 BIOS 中把 SSD 设为第一启动项，U 盘保留作回退。之后在 SSD 上 `upgrade` 只重写启动与系统分区，数据分区保留。
 
-vnstat 流量历史首次启动时默认存到 `/mnt/data/vnstat`、统计 eth0（已设置的不覆盖）。数据分区挂载后，`error-log` 服务只把 warn 及以上级别和 watchcat 事件写到 `/mnt/data/log/error.log`（10 MiB 轮换一份），排除 Tailscale 的常规输出；未挂载时不写系统分区。
+根分区从 960 MiB 改为 2048 MiB 后的第一次升级：只有启动与系统分区的盘（U 盘）由 sysupgrade 整盘重写，配置保留，自行装到 overlay 的软件包需重装；带数据分区的盘会被拒绝，须从另一块启动盘 `migrate` 重装。系统分区必须结束在 4 GiB 的数据分区起点之前。
+
+vnstat 默认统计 eth0（已设置的不覆盖）；存储位置每次开机由 `vnstat-storage` 决定：挂载了数据分区存 `/mnt/data/vnstat`（默认 5 分钟保存），只有 U 盘时存 `/etc/vnstat`、每 60 分钟保存一次以减少闪存写入（断电最多丢 1 小时），并随升级保留；首次换到 SSD 时把 U 盘上的历史复制过去一次。系统日志只在内存（1 MiB），不写闪存。数据分区挂载后，`error-log` 服务只把 warn 及以上级别和 watchcat 事件写到 `/mnt/data/log/error.log`（10 MiB 轮换一份），排除 Tailscale 的常规输出；未挂载时不写系统分区。
 
 ## 恢复与验收
 
@@ -76,12 +78,13 @@ vnstat 流量历史首次启动时默认存到 `/mnt/data/vnstat`、统计 eth0�
 - `configs/General.config`：两个目标原有的通用配置；x86 配置最后合并，避免套用 ARM 优化参数。
 - `scripts/x86-build.py`：按次解析最新源码、准备、配置验证及发布。
 - `files/x86/usr/sbin/firmware-update`：设备端检查、手动确认更新及 SSD 迁移。
-- `files/x86/usr/libexec/error-log`、`files/x86/etc/init.d/error-log`：异常日志落盘。
+- `files/x86/usr/libexec/error-log`、`files/x86/etc/init.d/error-log`：异常日志落盘（仅 SSD）。
+- `files/x86/usr/libexec/vnstat-storage`、`files/x86/etc/init.d/vnstat-storage`：按 U 盘/SSD 选择流量统计存储。
 - `configs/Taiyi.config`、太乙 workflow 与 `Roc-script.sh` 原太乙部分：继续使用原有流程。太乙仅对预先存在的 extroot 分区执行原迁移逻辑。
 
 ```sh
 python3 -m unittest discover -s tests -v
-shellcheck -s sh files/x86/usr/sbin/firmware-update files/x86/usr/libexec/error-log
+shellcheck -s sh files/x86/usr/sbin/firmware-update files/x86/usr/libexec/error-log files/x86/usr/libexec/vnstat-storage
 actionlint .github/workflows/x86-64-ImmortalWrt.yml .github/workflows/Trigger-All-Workflows.yml
 ```
 

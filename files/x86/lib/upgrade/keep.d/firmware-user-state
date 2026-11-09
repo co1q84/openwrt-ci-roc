@@ -2,3 +2,4 @@
 /etc/tailscale/
 /etc/openclash/config/
 /etc/openclash/custom/
+/etc/vnstat/

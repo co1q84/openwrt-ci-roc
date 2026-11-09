@@ -17,6 +17,9 @@ from datetime import datetime, timezone
 
 REPO = Path(__file__).resolve().parents[1]
 FILESYSTEMS = ('squashfs', 'ext4')
+# Boot 64 MiB and root 2048 MiB, in 512-byte sectors (configs/x86-64.config).
+BOOT_SECTORS = 64 * 2048
+ROOT_SECTORS = 2048 * 2048
 
 
 def run(*args, cwd=None):
@@ -223,8 +226,8 @@ def image_partitions(image):
             continue
         start, end = struct.unpack_from('<QQ', data, offset + 32)
         parts.append([index + 1, start, end - start + 1])
-    if len(parts) != 2 or [p[0] for p in parts] != [1, 2] or [p[2] for p in parts] != [131072, 1966080]:
-        raise ValueError('Expected boot 64 MiB and root 960 MiB, no extra filesystem partitions')
+    if len(parts) != 2 or [p[0] for p in parts] != [1, 2] or [p[2] for p in parts] != [BOOT_SECTORS, ROOT_SECTORS]:
+        raise ValueError('Expected boot 64 MiB and root 2048 MiB, no extra filesystem partitions')
     return parts
 
 
@@ -262,7 +265,7 @@ def release(source, output, repo, tag):
     required = required_config(repo)
     check_config(source / '.config', required)
     target = source / 'bin/targets/x86/64'
-    # The same build produces both root filesystems on the identical 64/960 MiB layout.
+    # The same build produces both root filesystems on the identical 64/2048 MiB layout.
     images = {fs: list(target.glob(f'*-generic-{fs}-combined-efi.img.gz')) for fs in FILESYSTEMS}
     manifests = list(target.glob('*-generic.manifest'))
     if any(len(found) != 1 for found in images.values()) or len(manifests) != 1:

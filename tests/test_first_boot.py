@@ -5,7 +5,7 @@ import tempfile
 import unittest
 
 REPO = Path(__file__).resolve().parents[1]
-VNSTAT = REPO / 'files/x86/etc/uci-defaults/80-vnstat-ssd'
+VNSTAT = REPO / 'files/x86/etc/uci-defaults/80-vnstat-wan'
 
 
 class VnstatDefaultsTests(unittest.TestCase):
@@ -24,23 +24,19 @@ class VnstatDefaultsTests(unittest.TestCase):
         result = subprocess.run(['sh', str(VNSTAT)], env=env, capture_output=True, text=True)
         return result, conf.read_text(), calls.read_text() if calls.exists() else ''
 
-    def test_history_moves_to_ssd_once_and_wan_port_is_counted(self):
+    def test_wan_port_is_counted_and_storage_is_left_to_boot_time_choice(self):
         with tempfile.TemporaryDirectory() as directory:
-            result, text, calls = self.run_defaults(directory, ';DatabaseDir "/var/lib/vnstat"\n')
+            stock = ';DatabaseDir "/var/lib/vnstat"\n'
+            result, text, calls = self.run_defaults(directory, stock)
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn('\nDatabaseDir "/mnt/data/vnstat"\n', text)
             self.assertIn('add_list vnstat.@vnstat[0].interface=eth0', calls)
-            # The next firmware's first boot must not append a second line.
-            result, text, _ = self.run_defaults(directory, text)
-            self.assertEqual(text.count('DatabaseDir "/mnt/data/vnstat"'), 1)
+            self.assertEqual(text, stock)
 
-    def test_user_choices_are_kept(self):
+    def test_user_interface_choice_is_kept(self):
         with tempfile.TemporaryDirectory() as directory:
-            result, text, calls = self.run_defaults(directory, 'DatabaseDir "/srv/vnstat"\n', interface='br-lan')
+            result, _, calls = self.run_defaults(directory, '', interface='br-lan')
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertNotIn('/mnt/data', text)
             self.assertNotIn('add_list', calls)
-
 
 if __name__ == '__main__':
     unittest.main()

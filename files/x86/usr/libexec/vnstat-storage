@@ -1,0 +1,37 @@
+#!/bin/sh
+# Choose where vnstat keeps its history at every boot, before vnstat starts:
+# - SSD data partition mounted: /mnt/data/vnstat, vnstat's default save intervals;
+# - system disk only (USB): /etc/vnstat on the overlay, saved once an hour to
+#   spare the flash (at most one hour of counts is lost on power failure).
+set -u
+
+CONF=${VNSTAT_CONF:-/etc/vnstat.conf}
+MOUNT=${MOUNT:-/mnt/data}
+SYSTEM_DIR=${SYSTEM_DIR:-/etc/vnstat}
+MARK='# Storage chosen at boot by /usr/libexec/vnstat-storage'
+
+[ -f "$CONF" ] || exit 0
+if grep -q " $MOUNT " "${PROC_MOUNTS:-/proc/mounts}"; then
+	dir=$MOUNT/vnstat save=5 offline=30
+	# First SSD boot after a USB system: carry the existing history over once.
+	if [ ! -e "$dir/vnstat.db" ] && [ -s "$SYSTEM_DIR/vnstat.db" ]; then
+		mkdir -p "$dir" && cp -p "$SYSTEM_DIR/vnstat.db" "$dir/vnstat.db"
+	fi
+else
+	dir=$SYSTEM_DIR save=60 offline=60
+fi
+
+tmp=$CONF.new.$$
+{
+	# Drop settings managed here, plus the older fixed-SSD line and its comment.
+	grep -vE '^[[:space:]]*(DatabaseDir|SaveInterval|OfflineSaveInterval)[[:space:]]' "$CONF" |
+		grep -vxF -e "$MARK" -e '# SSD data partition: history survives reboots and upgrades.' |
+		awk 'NF { if (gap && seen) print ""; gap = 0; seen = 1; print; next } { gap = 1 }'
+	printf '%s\nDatabaseDir "%s"\nSaveInterval %s\nOfflineSaveInterval %s\n' "$MARK" "$dir" "$save" "$offline"
+} > "$tmp" || { rm -f "$tmp"; exit 1; }
+# Rewrite only on a real change, so an unchanged boot does not write the flash.
+if cmp -s "$tmp" "$CONF"; then
+	rm -f "$tmp"
+else
+	mv -f "$tmp" "$CONF"
+fi

@@ -51,7 +51,7 @@ class UpdateTests(unittest.TestCase):
                     'target': 'x86/64', 'device': 'J4125-4L',
                     'image': {'name': 'immortalwrt-x86-64-generic-squashfs-combined-efi.img.gz',
                               'sha256': 'a'*64, 'size': 1024, 'filesystem': 'squashfs', 'boot': 'efi',
-                              'partitions': [[1,512,131072],[2,131584,1966080]]}}
+                              'partitions': [[1,512,131072],[2,131584,4194304]]}}
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'release.json'
             path.write_text(json.dumps(metadata))
@@ -154,6 +154,39 @@ class UpdateTests(unittest.TestCase):
                 self.assertIn('failure-stage', result.stderr)
                 self.assertFalse(sentinel.exists())
 
+
+    def test_layout_change_rewrites_only_a_disk_without_data_partition(self):
+        # 960 -> 2048 MiB root: a USB-only disk is rewritten by sysupgrade with its
+        # configuration kept; an SSD with a data partition would lose that partition.
+        image = '1\t512\t131072\n2\t131584\t4194304\n'
+        stub = 'openwrt_call() { cat "$DEVICE"; }; '
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            (work / 'expected.partitions').write_text(image)
+            (work / 'boot-device').write_text('sdb\n')
+            device = work / 'device'
+            cases = [('1\t512\t131072\n2\t131584\t1966080\n', True, '1'),     # old USB layout
+                     (image, True, ''),                                              # same layout
+                     ('1\t512\t131072\n2\t131584\t1966080\n4\t8388608\t1000\n', False, '')]  # SSD
+            for layout, ok, change in cases:
+                with self.subTest(layout=layout):
+                    device.write_text(layout)
+                    result = self.call(stub + 'WORK="$1"; DEVICE="$2"; LAYOUT_CHANGE=; check_layout && echo "change=$LAYOUT_CHANGE"',
+                                       work, device)
+                    self.assertEqual(result.returncode == 0, ok, result.stderr)
+                    if ok:
+                        self.assertIn(f'change={change}\n', result.stdout)
+                    else:
+                        self.assertIn('migrate', result.stderr)
+
+    def test_system_partitions_must_end_before_the_ssd_data_partition(self):
+        with tempfile.TemporaryDirectory() as directory:
+            layout = Path(directory) / 'expected'
+            for root, ok in [(4194304, True), (8257024, True), (8257025, False)]:
+                with self.subTest(root=root):
+                    layout.write_text(f'1\t512\t131072\n2\t131584\t{root}\n')
+                    result = self.call('system_fits_before_data "$1"', layout)
+                    self.assertEqual(result.returncode == 0, ok, result.stderr)
 
     def test_extra_data_partition_is_allowed_but_system_changes_are_not(self):
         expected = '1\t512\t131072\n2\t131584\t1966080\n'

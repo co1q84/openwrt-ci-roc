@@ -1,0 +1,12 @@
+#!/bin/sh /etc/rc.common
+# Select vnstat's database location (SSD data partition or system disk) before
+# vnstat (START=60) starts; fstab (START=11) has mounted the data partition.
+START=59
+
+boot() {
+	/usr/libexec/vnstat-storage
+}
+
+start() {
+	/usr/libexec/vnstat-storage
+}

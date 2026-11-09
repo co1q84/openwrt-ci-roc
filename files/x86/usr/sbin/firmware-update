@@ -76,7 +76,7 @@ validate_metadata() {
       (.image.size | type == "number" and . > 0) and
       (.image.partitions | length == 2) and
       .image.partitions[0][0] == 1 and .image.partitions[0][2] == 131072 and
-      .image.partitions[1][0] == 2 and .image.partitions[1][2] == 1966080 and
+      .image.partitions[1][0] == 2 and .image.partitions[1][2] == 4194304 and
       .image.partitions[0][1] > 0 and
       .image.partitions[1][1] >= (.image.partitions[0][1] + 131072)
     ' "$1" >/dev/null || { fail '发布元数据或硬件/分区类型不匹配'; return 1; }
@@ -179,12 +179,28 @@ read_device_layout() {
     check_layout
 }
 
+only_system_partitions() {
+    # only_system_partitions DEVICE IMAGE: the disk holds no partition beyond the image's own.
+    awk -F '\t' 'NR == FNR { want[$1] = 1; next } !($1 in want) { bad = 1 } END { exit bad }' "$2" "$1"
+}
+
 check_layout() {
     openwrt_call /lib device_map > "$WORK/device.partitions" || return 1
-    layout_compatible "$WORK/device.partitions" "$WORK/expected.partitions" || {
-        fail '当前启动盘的系统分区与新镜像不同，需人工迁移，禁止自动写整盘'; return 1;
-    }
+    if ! layout_compatible "$WORK/device.partitions" "$WORK/expected.partitions"; then
+        # A changed system layout makes sysupgrade write the whole disk. Its
+        # configuration is still restored, but any extra partition is lost.
+        only_system_partitions "$WORK/device.partitions" "$WORK/expected.partitions" || {
+            fail '分区布局已变化，且启动盘上有数据分区：整盘写入会丢失它。请从另一块启动盘运行 migrate 重装'; return 1;
+        }
+        LAYOUT_CHANGE=1
+        printf '注意：新固件分区布局不同，将整盘重写当前启动盘；配置照常保留，自行安装到 overlay 的软件包需重装。\n'
+    fi
     printf '已核对当前启动盘：/dev/%s（不会按固定 sda/sdb 选择磁盘）\n' "$(cat "$WORK/boot-device")"
+}
+
+system_fits_before_data() {
+    # system_fits_before_data LAYOUT: the system area ends before the SSD data partition.
+    awk -F '\t' -v limit="$DATA_START" '$2 + $3 > limit { bad = 1 } END { exit bad }' "$1"
 }
 
 prepare_image() {
@@ -580,6 +596,7 @@ rollback() {
 }
 
 confirm_upgrade() {
+    [ "${LAYOUT_CHANGE:-}" != 1 ] || printf '本次为分区布局变化后的整盘重写（配置保留，overlay 上自装的软件包需重装）。\n'
     printf '确认两个备份已保存到电脑后，输入 BACKUP-SAVED：'
     IFS= read -r reply || return 1
     [ "$reply" = BACKUP-SAVED ] || { fail '未确认已留存备份'; return 1; }
@@ -646,6 +663,7 @@ migrate() {
     check_target_disk "$1"
     get_release
     jq -r '.image.partitions[] | @tsv' "$WORK/release.json" > "$WORK/expected.partitions"
+    system_fits_before_data "$WORK/expected.partitions" || { fail '系统分区会覆盖数据分区起点'; return 1; }
     prepare_image
     image_header "$IMAGE" "$WORK/image.header"
     distinct_root_ids "$WORK/image.header" "/dev/$(boot_disk)"

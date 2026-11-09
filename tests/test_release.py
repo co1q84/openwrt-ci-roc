@@ -7,7 +7,7 @@ from pathlib import Path
 from test_x86_build import load_build
 
 
-def efi_image(path, root_sectors=1966080):
+def efi_image(path, root_sectors=4194304):
     data = bytearray(34 * 512)
     data[510:512] = b'\x55\xaa'
     data[512:520] = b'EFI PART'
@@ -27,9 +27,9 @@ class ReleaseTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             image = Path(directory) / 'firmware.img.gz'
             efi_image(image)
-            self.assertEqual(build.image_partitions(image), [[1, 512, 131072], [2, 131584, 1966080]])
-            efi_image(image, root_sectors=3145728)
-            with self.assertRaisesRegex(ValueError, '960'):
+            self.assertEqual(build.image_partitions(image), [[1, 512, 131072], [2, 131584, 4194304]])
+            efi_image(image, root_sectors=1966080)
+            with self.assertRaisesRegex(ValueError, '2048'):
                 build.image_partitions(image)
             with gzip.open(image, 'wb') as archive:
                 archive.write(b'not EFI')
@@ -76,7 +76,7 @@ class ReleaseTests(unittest.TestCase):
             for fs, info in metadata['images'].items():
                 self.assertTrue((output / info['name']).exists())
                 self.assertIn(f'-{fs}-', info['name'])
-                self.assertEqual(info['partitions'], [[1, 512, 131072], [2, 131584, 1966080]])
+                self.assertEqual(info['partitions'], [[1, 512, 131072], [2, 131584, 4194304]])
                 self.assertIn(info['name'], (output / 'sha256sums').read_text())
 
     def test_stale_checksum_is_replaced_by_actual_asset_hash(self):

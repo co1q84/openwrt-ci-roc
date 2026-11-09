@@ -1,0 +1,8 @@
+#!/bin/sh
+# Count the WAN port unless the administrator already chose interfaces.
+# Where the history is stored is decided at every boot by vnstat-storage.
+if ! uci -q get 'vnstat.@vnstat[0].interface' >/dev/null; then
+	uci -q add_list 'vnstat.@vnstat[0].interface=eth0' && uci -q commit vnstat
+fi
+
+exit 0
