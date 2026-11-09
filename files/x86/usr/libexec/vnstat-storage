@@ -11,7 +11,7 @@ SYSTEM_DIR=${SYSTEM_DIR:-/etc/vnstat}
 MARK='# Storage chosen at boot by /usr/libexec/vnstat-storage'
 
 [ -f "$CONF" ] || exit 0
-if grep -q " $MOUNT " "${PROC_MOUNTS:-/proc/mounts}"; then
+if grep -q " $MOUNT ext4 " "${PROC_MOUNTS:-/proc/mounts}"; then
 	dir=$MOUNT/vnstat save=5 offline=30
 	# First SSD boot after a USB system: carry the existing history over once.
 	if [ ! -e "$dir/vnstat.db" ] && [ -s "$SYSTEM_DIR/vnstat.db" ]; then

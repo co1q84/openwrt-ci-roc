@@ -1,0 +1,12 @@
+#!/bin/sh /etc/rc.common
+# Protect the system disk when the SSD data partition is missing (see
+# /usr/libexec/data-guard). Runs right after fstab (START=11) mounts it.
+START=12
+
+boot() {
+	/usr/libexec/data-guard
+}
+
+start() {
+	/usr/libexec/data-guard
+}

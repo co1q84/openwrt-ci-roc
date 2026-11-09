@@ -1,0 +1,16 @@
+#!/bin/sh
+# A system set up with the SSD data partition (fstab section ssd_data) whose
+# partition did not mount gets a tiny read-only tmpfs over /mnt/data. Docker,
+# vnstat, error-log and rollback then fail or fall back instead of silently
+# filling the system overlay. They only accept an ext4 /mnt/data as the data
+# partition, so the placeholder is never mistaken for it.
+set -u
+
+MOUNT=${MOUNT:-/mnt/data}
+MOUNTS=${PROC_MOUNTS:-/proc/mounts}
+
+[ "$(uci -q get fstab.ssd_data.enabled)" = 1 ] || exit 0
+grep -q " $MOUNT " "$MOUNTS" && exit 0
+logger -p daemon.err -t data-guard "SSD data partition is not mounted; $MOUNT is read-only so nothing fills the system disk"
+mkdir -p "$MOUNT" && mount -t tmpfs -o ro,size=4k,mode=0555 data-missing "$MOUNT"
+exit 0

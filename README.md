@@ -68,6 +68,13 @@ scp -O -P 50222 root@192.168.100.1:/tmp/firmware-update.实际目录/migration-b
 
 vnstat 默认统计 eth0（已设置的不覆盖）；存储位置每次开机由 `vnstat-storage` 决定：挂载了数据分区存 `/mnt/data/vnstat`（默认 5 分钟保存），只有 U 盘时存 `/etc/vnstat`、每 60 分钟保存一次以减少闪存写入（断电最多丢 1 小时），并随升级保留；首次换到 SSD 时把 U 盘上的历史复制过去一次。系统日志只在内存（1 MiB），不写闪存。数据分区挂载后，`error-log` 服务只把 warn 及以上级别和 watchcat 事件写到 `/mnt/data/log/error.log`（10 MiB 轮换一份），排除 Tailscale 的常规输出；未挂载时不写系统分区。
 
+## 长期运行与两种启动模式
+
+- 硬件看门狗：`kmod-i2c-i801` 注册 J4125 的 iTCO 定时器，由 procd 喂狗；系统卡死时自动重启（若 BIOS 锁定 TCO，驱动仅报告不可用）。
+- 只挂载已配置的文件系统：首次启动关闭 ImmortalWrt 的匿名自动挂载（只做一次，之后在 LuCI 中的选择保留），避免另一块系统盘（U 盘回退盘或 SSD）被读写挂载，断电后其启动分区受损。
+- SSD 数据分区挂载前做文件系统检查（`enabled_fsck`）。若系统配置了数据分区却未挂载，`data-guard` 把 `/mnt/data` 设为只读占位：Docker 无法写入而不会塞满系统分区，vnstat 退回系统盘，异常日志与回退停用；这些功能只认 ext4 的 `/mnt/data`。
+- UDP 缓冲区上限 7 MiB，供 mihomo 的 QUIC 类协议（hysteria2、tuic）与 Tailscale 使用。
+
 ## 恢复与验收
 
 刷机前保留原固件下载、上述备份及本地控制台/USB 启动恢复方法。升级后确认 WAN 拨号、DNS、SSH 原端口、LuCI 主题和所有实际使用的插件业务；IPv6 的启停仍由原配置决定。版本更新后的故障通过保存的 manifest、config 和提交清单追溯，必要时使用原镜像与完整配置备份恢复。
@@ -80,6 +87,7 @@ vnstat 默认统计 eth0（已设置的不覆盖）；存储位置每次开机�
 - `files/x86/usr/sbin/firmware-update`：设备端检查、手动确认更新及 SSD 迁移。
 - `files/x86/usr/libexec/error-log`、`files/x86/etc/init.d/error-log`：异常日志落盘（仅 SSD）。
 - `files/x86/usr/libexec/vnstat-storage`、`files/x86/etc/init.d/vnstat-storage`：按 U 盘/SSD 选择流量统计存储。
+- `files/x86/usr/libexec/data-guard`、`files/x86/etc/init.d/data-guard`：数据分区缺失时保护系统盘。
 - `configs/Taiyi.config`、太乙 workflow 与 `Roc-script.sh` 原太乙部分：继续使用原有流程。太乙仅对预先存在的 extroot 分区执行原迁移逻辑。
 
 ```sh

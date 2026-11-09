@@ -4,7 +4,7 @@ START=99
 USE_PROCD=1
 
 start_service() {
-	grep -q ' /mnt/data ' /proc/mounts || return 0
+	grep -q ' /mnt/data ext4 ' /proc/mounts || return 0
 	procd_open_instance
 	procd_set_param command /usr/libexec/error-log
 	procd_set_param respawn 3600 5 0

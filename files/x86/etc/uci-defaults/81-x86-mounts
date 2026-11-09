@@ -1,0 +1,12 @@
+#!/bin/sh
+# Mount only configured filesystems. ImmortalWrt's automount enables anonymous
+# mounting, which mounts the other system disk (USB fallback or SSD) read-write
+# under /mnt; a power loss can then leave its boot partition dirty. Applied
+# once; a later choice made in LuCI is kept.
+uci -q get system.@imm_init[0].x86_anon_mount_off >/dev/null && exit 0
+uci -q get system.@imm_init[0] >/dev/null || uci -q add system imm_init >/dev/null
+uci -q set fstab.@global[0].anon_mount=0
+uci -q set system.@imm_init[0].x86_anon_mount_off=1
+uci -q commit fstab
+uci -q commit system
+exit 0

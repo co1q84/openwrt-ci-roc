@@ -307,9 +307,11 @@ set PKG.ssd_data=mount
 set PKG.ssd_data.target=$DATA_MOUNT
 set PKG.ssd_data.uuid=$1
 set PKG.ssd_data.enabled=1
+set PKG.ssd_data.enabled_fsck=1
 EOF
+    # fsck at boot repairs the ext4 journal after a power loss before it is mounted.
     expect fstab ssd_data.uuid "$1" && expect fstab ssd_data.target "$DATA_MOUNT" &&
-        expect fstab ssd_data.enabled 1 || return 1
+        expect fstab ssd_data.enabled 1 && expect fstab ssd_data.enabled_fsck 1 || return 1
     if [ -f "$conf/dockerd" ]; then
         echo "set PKG.globals.data_root=$DATA_MOUNT/docker/" | uci_edit dockerd || return 1
         expect dockerd globals.data_root "$DATA_MOUNT/docker/" || return 1
@@ -499,7 +501,7 @@ STORE=${STORE:-$DATA_MOUNT/firmware}
 BUILD_FILE=${BUILD_FILE:-/etc/firmware-build.json}
 
 interactive() { [ -t 0 ]; }
-data_mounted() { grep -q " $DATA_MOUNT " "${PROC_MOUNTS:-/proc/mounts}"; }
+data_mounted() { grep -q " $DATA_MOUNT ext4 " "${PROC_MOUNTS:-/proc/mounts}"; }
 current_tag() { jq -er '.tag' "$BUILD_FILE" 2>/dev/null; }
 # shellcheck disable=SC2153 # PART is assigned by export_partdevice (eval).
 boot_part() { export_bootdevice && export_partdevice PART 1 && printf '%s\n' "$PART"; }
