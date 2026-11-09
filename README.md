@@ -70,7 +70,7 @@ vnstat 默认统计 eth0（已设置的不覆盖）；存储位置每次开机�
 
 ## 长期运行与两种启动模式
 
-- 硬件看门狗：`kmod-i2c-i801` 注册 J4125 的 iTCO 定时器，由 procd 喂狗；系统卡死时自动重启（若 BIOS 锁定 TCO，驱动仅报告不可用）。
+- 硬件看门狗：J4125 的 BIOS 只通过 ACPI WDAT 表提供 TCO 定时器（i2c-i801/iTCO 在真机上不注册看门狗），因此由构建脚本加入 `kmod-wdat-wdt`，开机早期加载，procd 喂狗（30 秒超时）；系统卡死时自动重启。检查：`ubus call system watchdog` 应为 `running`。若 BIOS 置位了 TCO 的禁止重启位，定时器会运行但超时不重启，需在 BIOS 中开启看门狗。
 - 只挂载已配置的文件系统：首次启动关闭 ImmortalWrt 的匿名自动挂载（只做一次，之后在 LuCI 中的选择保留），避免另一块系统盘（U 盘回退盘或 SSD）被读写挂载，断电后其启动分区受损。
 - SSD 数据分区挂载前做文件系统检查（`enabled_fsck`）。若系统配置了数据分区却未挂载，`data-guard` 把 `/mnt/data` 设为只读占位：之后自装、往数据分区写数据的软件不会塞满系统分区，vnstat 退回系统盘，异常日志与回退停用；这些功能只认 ext4 的 `/mnt/data`。
 - UDP 缓冲区上限 7 MiB，供 mihomo 的 QUIC 类协议（hysteria2、tuic）与 Tailscale 使用。

@@ -158,6 +158,40 @@ def set_board_ports(source):
         path.write_text(text.replace(marker, marker + BOARD_PORTS, 1))
 
 
+# The J4125 BIOS exposes its TCO watchdog only through the ACPI WDAT table:
+# neither i2c-i801 nor lpc_ich registers iTCO on Gemini Lake, and there is no
+# INT34D2 PMC device. Upstream has no package for this in-tree driver.
+WDAT_KMOD = '''
+
+define KernelPackage/wdat-wdt
+  SUBMENU:=$(OTHER_MENU)
+  TITLE:=ACPI Watchdog Action Table (WDAT) watchdog
+  DEPENDS:=@TARGET_x86
+  KCONFIG:= \\
+	CONFIG_WDAT_WDT \\
+	CONFIG_ACPI_WATCHDOG=y \\
+	CONFIG_WATCHDOG_CORE=y
+  FILES:=$(LINUX_DIR)/drivers/watchdog/wdat_wdt.ko
+  AUTOLOAD:=$(call AutoLoad,50,wdat_wdt,1)
+endef
+
+define KernelPackage/wdat-wdt/description
+  Hardware watchdog described by the firmware's ACPI WDAT table
+endef
+
+$(eval $(call KernelPackage,wdat-wdt))
+'''
+
+
+def add_wdat_watchdog(source):
+    path = source / 'target/linux/x86/modules.mk'
+    if not path.exists():
+        raise ValueError('Cannot find target/linux/x86/modules.mk to add the WDAT watchdog')
+    text = path.read_text()
+    if 'define KernelPackage/wdat-wdt\n' not in text:
+        path.write_text(text + WDAT_KMOD)
+
+
 def stamp_build(source, lock, tag):
     if not re.fullmatch(r'x86-64-[0-9]+-[0-9]+', tag):
         raise ValueError('Build identity requires an immutable CI release tag')
@@ -206,6 +240,7 @@ def prepare(source, repo, tag=None):
     run('./scripts/feeds', 'install', *packages, cwd=source)
     install_overlay(source, repo)
     set_board_ports(source)
+    add_wdat_watchdog(source)
     if tag:
         stamp_build(source, lock, tag)
     (source / '.config').write_text(''.join(f'{k}={v}\n' for k, v in requested.items()))

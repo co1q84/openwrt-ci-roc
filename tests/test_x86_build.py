@@ -196,6 +196,41 @@ class ConfigurationTests(unittest.TestCase):
                 build.set_board_ports(source)
 
 
+    def test_j4125_watchdog_uses_acpi_wdat_driver(self):
+        # On the real J4125 neither i2c-i801 nor lpc_ich registers iTCO; the
+        # BIOS exposes the TCO timer only through the ACPI WDAT table.
+        required = load_build().required_config(REPO)
+        self.assertEqual(required.get('CONFIG_PACKAGE_kmod-wdat-wdt'), 'y')
+        self.assertEqual(required.get('CONFIG_PACKAGE_kmod-itco-wdt'), 'n')
+
+    def test_wdat_kmod_is_defined_once_in_x86_modules(self):
+        build = load_build()
+        upstream = REPO / '.local/upstream/immortalwrt/target/linux/x86/modules.mk'
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory)
+            modules = source / 'target/linux/x86/modules.mk'
+            modules.parent.mkdir(parents=True)
+            original = (upstream.read_text() if upstream.exists() else
+                        'OTHER_MENU:=Other modules\n\n$(eval $(call KernelPackage,itco-wdt))\n')
+            modules.write_text(original)
+            build.add_wdat_watchdog(source)
+            text = modules.read_text()
+            self.assertTrue(text.startswith(original))
+            self.assertEqual(text.count('$(eval $(call KernelPackage,wdat-wdt))'), 1)
+            self.assertIn('CONFIG_WDAT_WDT', text)
+            self.assertIn('$(LINUX_DIR)/drivers/watchdog/wdat_wdt.ko', text)
+            # Loaded in early boot, so procd finds /dev/watchdog when it starts.
+            self.assertIn('$(call AutoLoad,50,wdat_wdt,1)', text)
+            build.add_wdat_watchdog(source)  # a rerun must not define it twice
+            self.assertEqual(modules.read_text(), text)
+            # An upstream definition wins; a second one would break the build.
+            modules.write_text(original + 'define KernelPackage/wdat-wdt\nendef\n')
+            build.add_wdat_watchdog(source)
+            self.assertEqual(modules.read_text().count('KernelPackage/wdat-wdt\n'), 1)
+            modules.unlink()
+            with self.assertRaisesRegex(ValueError, 'modules.mk'):
+                build.add_wdat_watchdog(source)
+
     def test_only_the_newest_four_x86_releases_are_kept(self):
         build = load_build()
         def rel(tag, day, draft=False):
